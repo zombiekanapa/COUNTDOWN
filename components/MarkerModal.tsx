@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Coordinates } from '../types';
 import { generateSpotDescription } from '../services/geminiService';
-import { Loader2, Wand2, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { Loader2, Wand2, ShieldCheck, TriangleAlert, WifiOff } from 'lucide-react';
 
 interface MarkerModalProps {
   position: Coordinates;
   initialData?: { name: string; description: string; type: 'shelter' | 'gathering_point' | 'medical' };
   onSubmit: (name: string, description: string, type: 'shelter' | 'gathering_point' | 'medical') => Promise<void>;
   onCancel: () => void;
+  isOnline: boolean;
 }
 
-const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubmit, onCancel }) => {
+const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubmit, onCancel, isOnline }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<'shelter' | 'gathering_point' | 'medical'>('gathering_point');
@@ -27,7 +28,7 @@ const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubm
   }, [initialData]);
 
   const handleGenerateAI = async () => {
-    if (!name) return;
+    if (!name || !isOnline) return;
     setIsGenerating(true);
     const desc = await generateSpotDescription(name, position.lat, position.lng);
     setDescription(desc.slice(0, 200)); // Enforce limit
@@ -48,24 +49,29 @@ const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubm
         {isSubmitting && (
           <div className="absolute inset-0 bg-gray-900/90 z-50 flex flex-col items-center justify-center text-center p-6 rounded-lg">
             <Loader2 className="animate-spin text-yellow-500 w-12 h-12 mb-4" />
-            <h3 className="text-xl font-bold text-white mb-2">AI Agent is Verifying...</h3>
-            <p className="text-gray-400 text-sm">Checking for civil defense relevance and safety protocols.</p>
+            <h3 className="text-xl font-bold text-white mb-2">{isOnline ? 'AI Agent is Verifying...' : 'Saving Offline Draft...'}</h3>
+            <p className="text-gray-400 text-sm">{isOnline ? 'Checking for civil defense relevance.' : 'Data will be queued for sync.'}</p>
           </div>
         )}
 
-        <div className="bg-yellow-500 p-3 flex items-center gap-2">
-          <TriangleAlert className="text-black h-6 w-6" />
-          <h2 className="text-black font-bold text-lg uppercase tracking-wider">
+        <div className={`p-3 flex items-center gap-2 ${isOnline ? 'bg-yellow-500' : 'bg-gray-700'}`}>
+          {isOnline ? <TriangleAlert className="text-black h-6 w-6" /> : <WifiOff className="text-gray-300 h-6 w-6" />}
+          <h2 className={`${isOnline ? 'text-black' : 'text-gray-200'} font-bold text-lg uppercase tracking-wider`}>
             {initialData ? 'Edit Marker' : 'Propose Evacuation Point'}
           </h2>
+          {!isOnline && <span className="text-[10px] bg-black text-white px-2 py-0.5 rounded ml-auto uppercase font-bold">Offline Mode</span>}
         </div>
         
         <div className="p-6 space-y-4">
           {!initialData && (
             <div className="bg-gray-800 p-3 rounded text-xs text-gray-300 border border-gray-700">
               <p className="flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-green-400 shrink-0" />
-                <span>Markers are public. An AI Agent will review your submission immediately. Spam will be rejected.</span>
+                <ShieldCheck className={`w-4 h-4 shrink-0 ${isOnline ? 'text-green-400' : 'text-gray-500'}`} />
+                <span>
+                  {isOnline 
+                    ? "Markers are public. An AI Agent will review your submission immediately."
+                    : "You are offline. Marker will be saved as 'Pending Sync' and verified when connection returns."}
+                </span>
               </p>
             </div>
           )}
@@ -99,11 +105,12 @@ const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubm
               <label className="block text-yellow-500 text-xs uppercase font-bold">Description (Max 200)</label>
               <button
                 onClick={handleGenerateAI}
-                disabled={!name || isGenerating}
+                disabled={!name || isGenerating || !isOnline}
                 className="text-xs flex items-center gap-1 text-cyan-400 hover:text-cyan-300 disabled:opacity-50 transition-colors"
+                title={!isOnline ? "AI Unavailable Offline" : "Auto-Generate Text"}
               >
                 {isGenerating ? <Loader2 className="animate-spin h-3 w-3" /> : <Wand2 className="h-3 w-3" />}
-                Auto-Write
+                {isOnline ? 'Auto-Write' : 'AI Offline'}
               </button>
             </div>
             <textarea
@@ -131,9 +138,9 @@ const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubm
           <button
             onClick={handleSubmit}
             disabled={!name || !description || isSubmitting}
-            className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black text-sm font-bold uppercase rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg hover:shadow-yellow-500/50"
+            className={`px-6 py-2 text-black text-sm font-bold uppercase rounded disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg ${isOnline ? 'bg-yellow-500 hover:bg-yellow-400 shadow-yellow-500/50' : 'bg-gray-500 hover:bg-gray-400 shadow-gray-500/50'}`}
           >
-            {initialData ? 'Update Details' : 'Verify & Submit'}
+            {initialData ? 'Update Details' : isOnline ? 'Verify & Submit' : 'Save Offline'}
           </button>
         </div>
       </div>

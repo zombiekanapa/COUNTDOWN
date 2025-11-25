@@ -1,5 +1,5 @@
 import { GoogleGenAI, Schema, Type } from "@google/genai";
-import { HazardZone } from "../types";
+import { HazardZone, IntelReport, AlertLevel, BroadcastMessage } from "../types";
 
 const getClient = () => {
   const apiKey = process.env.API_KEY;
@@ -91,11 +91,6 @@ export const moderateMarkerContent = async (
 };
 
 // 3. Strategic Analysis & Headlines (The "Intel Stream")
-export interface IntelReport {
-  zones: HazardZone[];
-  headlines: string[];
-}
-
 export const getStrategicAnalysis = async (): Promise<IntelReport> => {
   const ai = getClient();
   
@@ -109,7 +104,11 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
       "SYSTEM: Monitoring Port Channels...",
       "WEATHER: High winds expected in Downtown sector.",
       "TRAFFIC: Congestion on Castle Route (Trasa Zamkowa)."
-    ]
+    ],
+    defcon: {
+      level: 3,
+      description: "ROUND HOUSE - Increase in force readiness above that required for normal readiness."
+    }
   };
 
   if (!ai) return defaultData;
@@ -118,7 +117,8 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
     const prompt = `
       Act as the "Szczecin Defense AI". 
       1. Identify 3 potential hazard zones in Szczecin (industrial, transport hubs, chemical risks) based on general geographical knowledge.
-      2. Generate 3 short "Breaking News" headlines relevant to civil safety in Szczecin (simulate realistic scenarios like traffic, weather warnings, or industrial drills).
+      2. Generate 3 short "Breaking News" headlines relevant to civil safety in Szczecin.
+      3. Estimate the current DEFCON level (1-5) based on real-world global geopolitical tensions (simulating analysis from defconlevel.com).
       
       Return JSON.
     `;
@@ -148,6 +148,13 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
             headlines: {
               type: Type.ARRAY,
               items: { type: Type.STRING }
+            },
+            defcon: {
+              type: Type.OBJECT,
+              properties: {
+                 level: { type: Type.INTEGER },
+                 description: { type: Type.STRING }
+              }
             }
           }
         }
@@ -166,7 +173,6 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
         description: z.description,
         category: z.category
       }))
-      // Filter out invalid coordinates (NaN) to prevent Map crashes
       .filter((z: HazardZone) => 
         !isNaN(z.position.lat) && 
         !isNaN(z.position.lng) && 
@@ -175,11 +181,68 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
 
     return {
       zones: mappedZones.length > 0 ? mappedZones : defaultData.zones,
-      headlines: (data.headlines && data.headlines.length > 0) ? data.headlines : defaultData.headlines
+      headlines: (data.headlines && data.headlines.length > 0) ? data.headlines : defaultData.headlines,
+      defcon: data.defcon || defaultData.defcon
     };
 
   } catch (error) {
     console.error("Intel Error:", error);
     return defaultData;
+  }
+};
+
+// 4. Generate Single Broadcast Message
+export const generateBroadcast = async (level: AlertLevel): Promise<BroadcastMessage> => {
+  const ai = getClient();
+  
+  const severityMap = {
+    'low': 'info',
+    'medium': 'warning',
+    'high': 'critical'
+  };
+
+  const contextMap = {
+    'low': 'Weather updates, routine infrastructure checks, calm traffic reports.',
+    'medium': 'Minor accidents, traffic jams on bridges, public transport delays, air quality alerts.',
+    'high': 'Chemical leaks, structural failures, mass evacuation orders, extreme weather, grid blackouts.'
+  };
+
+  if (!ai) {
+    return {
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      text: `SIMULATION [${level.toUpperCase()}]: Signal test. No AI connection.`,
+      severity: severityMap[level] as any
+    };
+  }
+
+  try {
+    const prompt = `
+      Act as a Military Radio Operator for Szczecin Civil Defense.
+      Generate ONE short, urgent transmission message (max 10 words).
+      Use tactical jargon (SITREP, SECTOR, ALERT).
+      Context: ${contextMap[level]}
+      Return only the raw text of the message.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    return {
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      text: response.text?.trim() || "SIGNAL INTERRUPTED",
+      severity: severityMap[level] as any
+    };
+
+  } catch (error) {
+    return {
+      id: crypto.randomUUID(),
+      timestamp: Date.now(),
+      text: "CONNECTION LOST - RETRYING",
+      severity: 'warning'
+    };
   }
 };

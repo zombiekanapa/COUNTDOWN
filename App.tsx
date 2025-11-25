@@ -1,12 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { Coordinates, EvacuationMarker, AppMode, EmergencyContact, HazardZone, RouteData } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Coordinates, EvacuationMarker, AppMode, EmergencyContact, HazardZone, RouteData, AlertLevel, BroadcastMessage } from './types';
 import MapComponent from './components/Map';
 import MarkerModal from './components/MarkerModal';
 import ContactsModal from './components/ContactsModal';
 import AboutAIModal from './components/AboutAIModal';
 import TransmissionModal from './components/TransmissionModal';
-import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, ShieldAlert, Trash2, Flame, Bot, Info, Footprints, Loader2, Navigation, Antena } from 'lucide-react';
-import { moderateMarkerContent, getStrategicAnalysis } from './services/geminiService';
+import BroadcastReceiver from './components/BroadcastReceiver';
+import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, ShieldAlert, Trash2, Flame, Bot, Info, Footprints, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move } from 'lucide-react';
+import { moderateMarkerContent, getStrategicAnalysis, generateBroadcast } from './services/geminiService';
 
 const LOCAL_STORAGE_KEY_MARKERS = 'szczecin_evac_markers';
 const LOCAL_STORAGE_KEY_CONTACTS = 'szczecin_evac_contacts';
@@ -66,6 +67,10 @@ const App: React.FC = () => {
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [showTransmissionModal, setShowTransmissionModal] = useState(false);
   
+  // Connectivity State
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isSyncing, setIsSyncing] = useState(false);
+  
   // Location & Search State
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -75,11 +80,19 @@ const App: React.FC = () => {
 
   // Intel & Heatmap & Routing State
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
+  const [incomingContacts, setIncomingContacts] = useState<EmergencyContact[] | null>(null);
   const [hazardZones, setHazardZones] = useState<HazardZone[]>([]);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [intelHeadlines, setIntelHeadlines] = useState<string[]>([]);
+  const [defcon, setDefcon] = useState<{level: number, description: string}>({level: 5, description: "Loading..."});
   const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [isCalculatingRoute, setIsCalculatingRoute] = useState(false);
+
+  // Broadcast Receiver State
+  const [broadcasts, setBroadcasts] = useState<BroadcastMessage[]>([]);
+  const [alertLevel, setAlertLevel] = useState<AlertLevel>('low');
+  const [isReceiverOpen, setIsReceiverOpen] = useState(true);
+  const timerRef = useRef<number | null>(null);
 
   // Custom Navigation State
   const [showNavOptions, setShowNavOptions] = useState(false);
@@ -87,23 +100,121 @@ const App: React.FC = () => {
   const [navStartPoint, setNavStartPoint] = useState<Coordinates | null>(null);
   const [navTargetId, setNavTargetId] = useState<string>('');
 
+  // Handle Online/Offline Status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   // Load Data
   useEffect(() => {
     const savedMarkers = localStorage.getItem(LOCAL_STORAGE_KEY_MARKERS);
-    if (savedMarkers) setMarkers(JSON.parse(savedMarkers));
-    else setMarkers(INITIAL_MARKERS);
+    if (savedMarkers) {
+      try {
+        const parsedMarkers = JSON.parse(savedMarkers);
+        // Validate markers to ensure no NaN coordinates
+        const validMarkers = parsedMarkers.filter((m: any) => 
+          m.position && 
+          typeof m.position.lat === 'number' && 
+          typeof m.position.lng === 'number' &&
+          !isNaN(m.position.lat) &&
+          !isNaN(m.position.lng)
+        );
+        setMarkers(validMarkers);
+      } catch (e) {
+        console.error("Failed to parse markers", e);
+        setMarkers(INITIAL_MARKERS);
+      }
+    } else {
+      setMarkers(INITIAL_MARKERS);
+    }
 
     const savedContacts = localStorage.getItem(LOCAL_STORAGE_KEY_CONTACTS);
-    if (savedContacts) setContacts(JSON.parse(savedContacts));
+    if (savedContacts) {
+      try {
+        setContacts(JSON.parse(savedContacts));
+      } catch (e) {
+         console.error("Failed to parse contacts", e);
+      }
+    }
 
-    // Fetch AI Analysis
-    const fetchIntel = async () => {
-      const report = await getStrategicAnalysis();
-      setHazardZones(report.zones);
-      setIntelHeadlines(report.headlines);
-    };
-    fetchIntel();
+    // Check for shared roster in URL
+    const params = new URLSearchParams(window.location.search);
+    const rosterHash = params.get('roster');
+    if (rosterHash) {
+      try {
+        // Decode: Base64 -> Escape -> URI Component (Handles UTF-8)
+        const json = decodeURIComponent(escape(window.atob(rosterHash)));
+        const sharedData = JSON.parse(json);
+        if (Array.isArray(sharedData)) {
+          setIncomingContacts(sharedData);
+          setShowContactsModal(true);
+        }
+      } catch (e) {
+        console.error("Failed to parse roster link", e);
+      }
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
+    // Fetch AI Analysis (Only if online)
+    if (navigator.onLine) {
+      const fetchIntel = async () => {
+        const report = await getStrategicAnalysis();
+        setHazardZones(report.zones);
+        setIntelHeadlines(report.headlines);
+        setDefcon({
+           level: report.defcon.level,
+           description: report.defcon.description
+        });
+      };
+      fetchIntel();
+    }
   }, []);
+
+  // Broadcast Simulation Loop
+  useEffect(() => {
+    // Clear existing timer when alert level changes
+    if (timerRef.current) {
+      window.clearInterval(timerRef.current);
+    }
+
+    // Calculate interval based on Alert Level
+    // Low: ~45s, Medium: ~25s, High: ~10s
+    const getInterval = () => {
+      switch (alertLevel) {
+        case 'high': return 10000 + Math.random() * 5000;
+        case 'medium': return 25000 + Math.random() * 10000;
+        case 'low': return 45000 + Math.random() * 15000;
+      }
+    };
+
+    const fetchBroadcast = async () => {
+      // 30% chance to skip if Low to reduce spam
+      if (alertLevel === 'low' && Math.random() > 0.7) return;
+
+      const newMsg = await generateBroadcast(alertLevel);
+      setBroadcasts(prev => [...prev.slice(-19), newMsg]); // Keep last 20
+    };
+
+    // Run immediately once if online
+    if (isOnline) {
+      fetchBroadcast();
+      timerRef.current = window.setInterval(fetchBroadcast, getInterval());
+    }
+
+    return () => {
+      if (timerRef.current) window.clearInterval(timerRef.current);
+    };
+  }, [alertLevel, isOnline]);
 
   // Save Data
   useEffect(() => {
@@ -125,25 +236,31 @@ const App: React.FC = () => {
   };
 
   const handleMapClick = (pos: Coordinates) => {
-    if (mode === AppMode.ADD_MARKER) {
-      setTempMarkerPos(pos);
-    } else if (showNavOptions && navStartMode === 'cursor') {
-      setNavStartPoint(pos);
-      // alert("Start Point Set");
+    if (pos && !isNaN(pos.lat) && !isNaN(pos.lng)) {
+      if (mode === AppMode.ADD_MARKER) {
+        setTempMarkerPos(pos);
+      } else if (showNavOptions && navStartMode === 'cursor') {
+        setNavStartPoint(pos);
+      }
     }
   };
 
   const handleMarkerSubmit = async (name: string, description: string, type: 'shelter' | 'gathering_point' | 'medical') => {
-    const moderationResult = await moderateMarkerContent(name, description);
-
-    if (!moderationResult.approved) {
-      alert(`⛔ REQUEST DENIED BY AI AGENT\n\nReason: ${moderationResult.reason}`);
-      return; 
+    let verificationStatus: EvacuationMarker['verificationStatus'] = 'pending_sync';
+    
+    // Only perform AI moderation if online
+    if (isOnline) {
+      const moderationResult = await moderateMarkerContent(name, description);
+      if (!moderationResult.approved) {
+        alert(`⛔ REQUEST DENIED BY AI AGENT\n\nReason: ${moderationResult.reason}`);
+        return; 
+      }
+      verificationStatus = 'ai_approved';
     }
 
     if (editingMarker) {
       // Update existing
-      setMarkers(markers.map(m => m.id === editingMarker.id ? { ...m, name, description, type } : m));
+      setMarkers(markers.map(m => m.id === editingMarker.id ? { ...m, name, description, type, verificationStatus: isOnline ? 'ai_approved' : 'pending_sync' } : m));
       setEditingMarker(null);
     } else if (tempMarkerPos) {
       // Create new
@@ -154,7 +271,7 @@ const App: React.FC = () => {
         position: tempMarkerPos,
         createdAt: Date.now(),
         type,
-        verificationStatus: 'ai_approved',
+        verificationStatus,
         authorName: 'Community Scout'
       };
       setMarkers([...markers, newMarker]);
@@ -162,6 +279,36 @@ const App: React.FC = () => {
     }
     
     setMode(AppMode.VIEW);
+  };
+
+  const handleSync = async () => {
+    if (!isOnline) return;
+    setIsSyncing(true);
+    
+    const pendingMarkers = markers.filter(m => m.verificationStatus === 'pending_sync');
+    const processedMarkers = [...markers];
+    let approvedCount = 0;
+    let rejectedCount = 0;
+
+    for (const marker of pendingMarkers) {
+       const result = await moderateMarkerContent(marker.name, marker.description);
+       const index = processedMarkers.findIndex(m => m.id === marker.id);
+       if (index !== -1) {
+         if (result.approved) {
+           processedMarkers[index] = { ...processedMarkers[index], verificationStatus: 'ai_approved' };
+           approvedCount++;
+         } else {
+           // If rejected, we might tag it or delete it. For now, let's keep it but mark vaguely or delete.
+           // Decision: Delete rejected spam from local storage to keep map clean.
+           processedMarkers.splice(index, 1);
+           rejectedCount++;
+         }
+       }
+    }
+
+    setMarkers(processedMarkers);
+    setIsSyncing(false);
+    alert(`Sync Complete.\nApproved: ${approvedCount}\nRejected/Removed: ${rejectedCount}`);
   };
 
   const deleteMarker = (id: string) => {
@@ -175,8 +322,10 @@ const App: React.FC = () => {
        navigator.geolocation.getCurrentPosition(
          (position) => {
            const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
-           setUserLocation(coords);
-           setMapCenter(coords); // Move map to user
+           if (!isNaN(coords.lat) && !isNaN(coords.lng)) {
+             setUserLocation(coords);
+             setMapCenter(coords); // Move map to user
+           }
          },
          (error) => {
            console.error(error);
@@ -189,6 +338,11 @@ const App: React.FC = () => {
   };
 
   const calculateCustomRoute = async () => {
+    if (!isOnline) {
+      alert("Offline Mode: Routing services unavailable.");
+      return;
+    }
+
     // 1. Determine Start
     let startCoords: Coordinates | null = null;
     
@@ -201,8 +355,10 @@ const App: React.FC = () => {
              navigator.geolocation.getCurrentPosition(
              (pos) => {
                const c = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-               setUserLocation(c);
-               startCoords = c;
+               if (!isNaN(c.lat) && !isNaN(c.lng)) {
+                 setUserLocation(c);
+                 startCoords = c;
+               }
                resolve();
              },
              () => {
@@ -216,8 +372,8 @@ const App: React.FC = () => {
       startCoords = navStartPoint;
     }
 
-    if (!startCoords) {
-      alert("Please define a starting location.");
+    if (!startCoords || isNaN(startCoords.lat) || isNaN(startCoords.lng)) {
+      alert("Please define a valid starting location.");
       return;
     }
 
@@ -246,8 +402,7 @@ const App: React.FC = () => {
           startPoint: navStartMode === 'cursor' ? startCoords : undefined
         });
         
-        // Center map to mid-point roughly or start
-        setMapCenter(startCoords);
+        // No longer forcing mapCenter here as the MapComponent's RouteFitter will handle zoom/bounds
         if(window.innerWidth < 768) setSidebarOpen(false); // Close sidebar on mobile
       } else {
         alert("Path calculation failed. Locations might be unreachable.");
@@ -261,6 +416,10 @@ const App: React.FC = () => {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOnline) {
+      alert("Offline Mode: Search unavailable.");
+      return;
+    }
     if (!searchQuery) return;
     setIsSearching(true);
     setSearchResult(null); // Clear previous
@@ -291,6 +450,22 @@ const App: React.FC = () => {
     }
   };
 
+  const handleImportContacts = (newContacts: EmergencyContact[]) => {
+    setContacts(prev => [...prev, ...newContacts]);
+    setIncomingContacts(null); 
+    alert(`Imported ${newContacts.length} contacts to My Crew.`);
+  };
+
+  // Helper for DEFCON Color
+  const getDefconColor = (level: number) => {
+     if (level <= 2) return 'bg-red-600 text-white animate-pulse';
+     if (level === 3) return 'bg-yellow-500 text-black';
+     if (level === 4) return 'bg-green-600 text-white';
+     return 'bg-blue-600 text-white';
+  };
+
+  const pendingSyncCount = markers.filter(m => m.verificationStatus === 'pending_sync').length;
+
   return (
     <div className="flex h-screen w-screen bg-gray-900 overflow-hidden relative font-sans">
       
@@ -306,21 +481,34 @@ const App: React.FC = () => {
           </button>
         </div>
 
-        <div className="p-4 flex-1 overflow-y-auto custom-scrollbar">
-          {/* Status Panel */}
-          <div className="mb-6 bg-gray-800 rounded p-3 border border-gray-700">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center border border-yellow-500">
-                <span className="text-xl">☢</span>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-bold text-white">Public Access</div>
-                <div className="text-xs text-green-400 flex items-center gap-1">
-                  <CheckCircle size={10} /> AI Moderator Active
-                </div>
-              </div>
-            </div>
+        {/* Connectivity Status Bar */}
+        <div className={`px-4 py-2 text-xs font-bold uppercase flex items-center justify-between ${isOnline ? 'bg-gray-800 text-gray-500' : 'bg-red-900/80 text-white animate-pulse'}`}>
+          <div className="flex items-center gap-2">
+            {isOnline ? <Wifi size={14} className="text-green-500" /> : <WifiOff size={14} />}
+            {isOnline ? 'SYSTEM ONLINE' : 'OFFLINE MODE'}
           </div>
+          {isOnline && pendingSyncCount > 0 && (
+             <button 
+               onClick={handleSync}
+               disabled={isSyncing}
+               className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300"
+             >
+               {isSyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+               SYNC ({pendingSyncCount})
+             </button>
+          )}
+        </div>
+
+        <div className="p-4 flex-1 overflow-y-auto custom-scrollbar">
+          {/* DEFCON Status Widget */}
+          <button 
+             onClick={() => setShowAboutModal(true)}
+             className={`w-full mb-6 rounded p-4 border border-gray-700 flex flex-col items-center justify-center gap-2 transition-all hover:scale-105 ${getDefconColor(defcon.level)}`}
+          >
+             <h2 className="text-3xl font-black tracking-widest">DEFCON {defcon.level}</h2>
+             <div className="text-[10px] uppercase font-bold text-center opacity-80">{defcon.description}</div>
+             <div className="text-[8px] opacity-60 mt-1">Source: AI Analysis / DefconLevel.com</div>
+          </button>
 
           <h3 className="text-gray-400 text-xs font-bold uppercase mb-3">Tactical Controls</h3>
           
@@ -397,33 +585,50 @@ const App: React.FC = () => {
 
                  <button
                    onClick={calculateCustomRoute}
-                   disabled={isCalculatingRoute || !navTargetId || (navStartMode === 'cursor' && !navStartPoint)}
-                   className="w-full bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2 rounded uppercase tracking-wide disabled:opacity-50 disabled:cursor-not-allowed"
+                   disabled={isCalculatingRoute || !navTargetId || (navStartMode === 'cursor' && !navStartPoint) || !isOnline}
+                   className="w-full bg-green-600 hover:bg-green-500 text-white text-xs font-bold py-2 rounded uppercase tracking-wide disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_10px_rgba(34,197,94,0.3)]"
                  >
-                   {isCalculatingRoute ? <Loader2 className="animate-spin inline mr-1 h-3 w-3" /> : 'Get Path'}
+                   {isCalculatingRoute ? <Loader2 className="animate-spin inline mr-1 h-3 w-3" /> : !isOnline ? 'OFFLINE' : 'CALCULATE ROUTE'}
                  </button>
+
+                 {/* Mission Brief / Results */}
+                 {routeData && !isCalculatingRoute && (
+                   <div className="mt-3 border-t border-gray-600 pt-3 animate-in fade-in duration-300">
+                     <h4 className="text-[10px] text-green-400 font-bold uppercase mb-2 flex items-center gap-1">
+                       <CheckCircle size={10} /> Mission Brief
+                     </h4>
+                     <div className="grid grid-cols-2 gap-2">
+                       <div className="bg-gray-900 p-2 rounded text-center border border-gray-700">
+                         <Clock size={14} className="mx-auto text-yellow-500 mb-1" />
+                         <span className="text-sm font-bold text-white block">{Math.ceil(routeData.duration / 60)} min</span>
+                         <span className="text-[9px] text-gray-500 uppercase">Est. Time</span>
+                       </div>
+                       <div className="bg-gray-900 p-2 rounded text-center border border-gray-700">
+                         <Move size={14} className="mx-auto text-blue-500 mb-1" />
+                         <span className="text-sm font-bold text-white block">{(routeData.distance / 1000).toFixed(2)} km</span>
+                         <span className="text-[9px] text-gray-500 uppercase">Distance</span>
+                       </div>
+                     </div>
+                   </div>
+                 )}
               </div>
             )}
 
             <button
-              onClick={() => setShowContactsModal(true)}
+              onClick={() => {
+                setShowContactsModal(true);
+                setIncomingContacts(null); // Ensure we open local contacts by default unless specified
+              }}
               className="w-full flex items-center gap-3 px-4 py-3 rounded font-bold bg-gray-800 text-gray-300 hover:bg-gray-700 transition-all border border-gray-700 hover:border-cyan-500"
             >
               <Users size={18} />
               ☢ MY CREW ({contacts.length})
             </button>
-             <button
-              onClick={() => setShowAboutModal(true)}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded font-bold bg-gray-800 text-cyan-400 hover:bg-gray-700 transition-all border border-gray-700 hover:border-cyan-500 mt-2"
-            >
-              <Bot size={18} />
-              AI SYSTEM BRIEFING
-            </button>
             <button
               onClick={() => setShowTransmissionModal(true)}
               className="w-full flex items-center gap-3 px-4 py-3 rounded font-bold bg-gray-800 text-purple-400 hover:bg-gray-700 transition-all border border-gray-700 hover:border-purple-500 mt-2"
             >
-              <Antena size={18} />
+              <Antenna size={18} />
               TRANSMISSION HUB
             </button>
           </div>
@@ -435,11 +640,14 @@ const App: React.FC = () => {
           
           <div className="space-y-2 pr-1">
             {markers.map(m => (
-              <div key={m.id} className="bg-gray-800/50 p-3 rounded border-l-4 border-yellow-500 hover:bg-gray-800 transition-colors group relative">
+              <div key={m.id} className={`bg-gray-800/50 p-3 rounded border-l-4 ${m.verificationStatus === 'pending_sync' ? 'border-gray-500 opacity-70' : 'border-yellow-500'} hover:bg-gray-800 transition-colors group relative`}>
                 <div className="flex justify-between items-start">
                   <div className="text-sm font-bold text-gray-200 group-hover:text-yellow-400 transition-colors">{m.name}</div>
                   {m.verificationStatus === 'ai_approved' && (
                      <span className="text-[10px] bg-blue-900 text-blue-300 px-1 rounded border border-blue-700">AI</span>
+                  )}
+                  {m.verificationStatus === 'pending_sync' && (
+                     <span className="text-[10px] bg-gray-700 text-gray-300 px-1 rounded border border-gray-600">WAITING</span>
                   )}
                 </div>
                 <div className="text-xs text-gray-500 mt-1 truncate">{m.description}</div>
@@ -477,7 +685,7 @@ const App: React.FC = () => {
       <div className="flex-1 h-full md:ml-80 relative flex flex-col">
         
         {/* Intel Ticker */}
-        {intelHeadlines.length > 0 && (
+        {intelHeadlines.length > 0 && isOnline && (
           <div className="bg-black/80 text-yellow-500 text-xs font-mono py-1 overflow-hidden whitespace-nowrap z-[1000] border-b border-yellow-600/50 shrink-0">
              <div className="inline-block animate-marquee pl-full">
                {intelHeadlines.map((h, i) => (
@@ -494,11 +702,13 @@ const App: React.FC = () => {
               type="text" 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search street in Szczecin..."
-              className="w-full bg-gray-900/90 text-white pl-4 pr-12 py-3 rounded-lg border border-yellow-500/30 focus:border-yellow-500 focus:outline-none backdrop-blur-sm"
+              placeholder={isOnline ? "Search street in Szczecin..." : "Search Unavailable (Offline)"}
+              disabled={!isOnline}
+              className={`w-full bg-gray-900/90 text-white pl-4 pr-12 py-3 rounded-lg border focus:outline-none backdrop-blur-sm ${isOnline ? 'border-yellow-500/30 focus:border-yellow-500' : 'border-red-900/50 opacity-50 cursor-not-allowed'}`}
             />
             <button 
               type="submit" 
+              disabled={!isOnline}
               className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 text-gray-400 hover:text-yellow-500 transition-colors"
             >
               {isSearching ? <div className="animate-spin rounded-full h-5 w-5 border-2 border-yellow-500 border-t-transparent" /> : <Search size={20} />}
@@ -576,6 +786,15 @@ const App: React.FC = () => {
         </div>
       </div>
 
+      {/* Broadcast Receiver Widget - Only shows if online or has messages */}
+      <BroadcastReceiver 
+         messages={broadcasts}
+         alertLevel={alertLevel}
+         setAlertLevel={setAlertLevel}
+         isOpen={isReceiverOpen}
+         toggleOpen={() => setIsReceiverOpen(!isReceiverOpen)}
+      />
+
       {/* Modals */}
       {(tempMarkerPos || editingMarker) && (
         <MarkerModal
@@ -591,17 +810,23 @@ const App: React.FC = () => {
             setEditingMarker(null);
             setMode(AppMode.VIEW);
           }}
+          isOnline={isOnline}
         />
       )}
 
       {showContactsModal && (
         <ContactsModal 
-          contacts={contacts}
+          contacts={incomingContacts || contacts}
           onAdd={(c) => setContacts([...contacts, c])}
           onDelete={(id) => setContacts(contacts.filter(c => c.id !== id))}
-          onClose={() => setShowContactsModal(false)}
+          onClose={() => {
+             setShowContactsModal(false);
+             setIncomingContacts(null);
+          }}
           currentLocation={userLocation}
           hazardZones={hazardZones}
+          importedContacts={incomingContacts ? incomingContacts : undefined}
+          onImport={handleImportContacts}
         />
       )}
 

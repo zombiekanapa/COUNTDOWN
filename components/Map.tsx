@@ -128,11 +128,31 @@ const MapController: React.FC<{ coords: Coordinates }> = ({ coords }) => {
   const map = useMap();
   useEffect(() => {
     // Safety check before flying
-    if (!isNaN(coords.lat) && !isNaN(coords.lng)) {
+    if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number' && !isNaN(coords.lat) && !isNaN(coords.lng)) {
       map.flyTo([coords.lat, coords.lng], 14, { duration: 1.5 });
     }
   }, [coords, map]);
   return null;
+};
+
+// Component to fit bounds to route when routeData changes
+const RouteFitter: React.FC<{ coords: Coordinates[] }> = ({ coords }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (coords && coords.length > 0) {
+      const validCoords = coords.filter(c => typeof c.lat === 'number' && typeof c.lng === 'number');
+      if (validCoords.length > 0) {
+        const bounds = L.latLngBounds(validCoords.map(c => [c.lat, c.lng]));
+        map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 1.5 });
+      }
+    }
+  }, [coords, map]);
+  return null;
+};
+
+// Helper to validate coordinates
+const isValidCoord = (c: Coordinates | null | undefined): boolean => {
+  return !!c && typeof c.lat === 'number' && typeof c.lng === 'number' && !isNaN(c.lat) && !isNaN(c.lng);
 };
 
 const MapComponent: React.FC<MapProps> = ({ 
@@ -162,7 +182,7 @@ const MapComponent: React.FC<MapProps> = ({
 
   // Ensure center is valid to prevent MapContainer crash
   const safeCenter: [number, number] = 
-    (!isNaN(center.lat) && !isNaN(center.lng)) 
+    isValidCoord(center)
       ? [center.lat, center.lng] 
       : [53.4285, 14.5528]; // Fallback to Szczecin default
 
@@ -178,11 +198,16 @@ const MapComponent: React.FC<MapProps> = ({
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
       
-      <MapController coords={center} />
+      {isValidCoord(center) && <MapController coords={center} />}
       <MapEvents onClick={onMapClick} mode={mode} />
+      
+      {/* Auto-Zoom to Route */}
+      {routeData && routeData.coordinates.length > 0 && (
+        <RouteFitter coords={routeData.coordinates} />
+      )}
 
       {/* User Location Marker */}
-      {userLocation && !isNaN(userLocation.lat) && !isNaN(userLocation.lng) && (
+      {isValidCoord(userLocation) && userLocation && (
         <>
           <Marker position={[userLocation.lat, userLocation.lng]} icon={UserIcon}>
             <Popup className="custom-popup">
@@ -198,7 +223,7 @@ const MapComponent: React.FC<MapProps> = ({
       )}
 
       {/* Custom Start Point (for routing) */}
-      {customStartPoint && !isNaN(customStartPoint.lat) && !isNaN(customStartPoint.lng) && (
+      {isValidCoord(customStartPoint) && customStartPoint && (
         <Marker position={[customStartPoint.lat, customStartPoint.lng]} icon={StartPointIcon} zIndexOffset={100}>
            <Popup>
               <div className="text-xs font-bold text-green-500">Route Start Point</div>
@@ -207,29 +232,23 @@ const MapComponent: React.FC<MapProps> = ({
       )}
 
       {/* Search Result HUD Crosshair */}
-      {searchResult && !isNaN(searchResult.lat) && !isNaN(searchResult.lng) && (
+      {isValidCoord(searchResult) && searchResult && (
          <Marker position={[searchResult.lat, searchResult.lng]} icon={SearchResultIcon} zIndexOffset={1000} />
       )}
 
       {/* Evacuation Route Polyline */}
       {routeData && (
         <Polyline
-          positions={routeData.coordinates.map(c => [c.lat, c.lng])}
-          pathOptions={{ color: '#10b981', weight: 4, dashArray: '10, 10', opacity: 0.8 }}
+          positions={routeData.coordinates.filter(c => isValidCoord(c)).map(c => [c.lat, c.lng])}
+          pathOptions={{ color: '#10b981', weight: 6, opacity: 0.8, lineCap: 'round', lineJoin: 'round' }}
         >
-          <Popup>
-            <div className="p-1">
-              <h3 className="font-bold text-green-500 uppercase">Safe Route</h3>
-              <p className="text-xs text-gray-300">Distance: {(routeData.distance / 1000).toFixed(2)} km</p>
-              <p className="text-xs text-gray-300">Est. Time: {Math.ceil(routeData.duration / 60)} min (Foot)</p>
-            </div>
-          </Popup>
+          {/* Popup removed here as info is now in Sidebar */}
         </Polyline>
       )}
 
       {/* Hazard Heatmap Zones - Filter invalid coords */}
       {showHeatmap && hazardZones.map((zone) => {
-        if (isNaN(zone.position.lat) || isNaN(zone.position.lng)) return null;
+        if (!isValidCoord(zone.position)) return null;
         return (
           <Circle
             key={zone.id}
@@ -257,7 +276,7 @@ const MapComponent: React.FC<MapProps> = ({
 
       {/* Evacuation Markers - Filter invalid coords */}
       {markers.map((marker) => {
-        if (isNaN(marker.position.lat) || isNaN(marker.position.lng)) return null;
+        if (!isValidCoord(marker.position)) return null;
         return (
           <Marker key={marker.id} position={[marker.position.lat, marker.position.lng]} icon={HazardIcon}>
             <Popup>
