@@ -1,0 +1,7 @@
+{
+  "name": "EVACUATE!",
+  "description": "A community mapping tool for designating evacuation spots in Szczecin, powered by Gemini AI for location analysis.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
