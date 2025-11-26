@@ -89,7 +89,7 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
       const url = `${window.location.origin}${window.location.pathname}?roster=${encoded}`;
       
       await navigator.clipboard.writeText(url);
-      alert("SECURE ROSTER LINK COPIED.\n\nSend this link to a trusted member. They will see a read-only view of this list and can import it.");
+      alert("SHAREABLE LINK GENERATED.\n\nThe unique URL for your crew roster has been copied to your clipboard. Send it to your trusted contacts.");
     } catch (e) {
       console.error(e);
       alert("Failed to generate or copy link.");
@@ -477,13 +477,14 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
                   </button>
                   <button 
                     onClick={generateShareLink}
-                    className="flex items-center justify-center gap-2 bg-cyan-900/50 hover:bg-cyan-800 border border-cyan-600 text-cyan-100 py-3 rounded transition-colors font-bold md:col-span-2"
+                    className="flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-500 border border-cyan-400 text-white py-3 rounded transition-all font-bold uppercase shadow-[0_0_15px_rgba(6,182,212,0.3)] md:col-span-2 group"
                   >
-                    <Link size={16} /> Generate Secure Roster Link (Copy to Clipboard)
+                    <Link size={18} className="group-hover:rotate-45 transition-transform" /> 
+                    Share My Crew
                   </button>
                </div>
                <p className="text-[10px] text-gray-500 mt-2 text-center">
-                 Data Privacy: Contacts are stored locally. Use the 'Generate Roster Link' to securely share this list with trusted devices.
+                 Data Privacy: Contacts are stored locally. Use the 'Share My Crew' button to generate a secure, single-use link for trusted contacts.
                </p>
             </div>
           )}

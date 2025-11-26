@@ -12,6 +12,7 @@ export interface HazardZone {
   riskLevel: 'high' | 'medium' | 'low';
   description: string;
   category: 'chemical' | 'transport' | 'industrial' | 'strategic';
+  zoneType?: 'danger' | 'safe';
 }
 
 export interface EvacuationMarker {
@@ -57,6 +58,12 @@ export interface BroadcastMessage {
   timestamp: number;
   text: string;
   severity: 'info' | 'warning' | 'critical';
+}
+
+export interface BroadcastConfig {
+  frequency: number;
+  types: ('weather' | 'traffic' | 'hazmat' | 'civil')[];
+  enabled: boolean;
 }
 
 export interface LinkItem {

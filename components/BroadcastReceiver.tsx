@@ -1,19 +1,19 @@
 import React, { useEffect, useRef } from 'react';
-import { Radio, Volume2, Activity, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
-import { BroadcastMessage, AlertLevel } from '../types';
+import { Radio, Volume2, Activity, ChevronDown, ChevronUp, AlertTriangle, Power } from 'lucide-react';
+import { BroadcastMessage, BroadcastConfig } from '../types';
 
 interface BroadcastReceiverProps {
   messages: BroadcastMessage[];
-  alertLevel: AlertLevel;
-  setAlertLevel: (level: AlertLevel) => void;
+  config: BroadcastConfig;
+  setConfig: (config: BroadcastConfig) => void;
   isOpen: boolean;
   toggleOpen: () => void;
 }
 
 const BroadcastReceiver: React.FC<BroadcastReceiverProps> = ({ 
   messages, 
-  alertLevel, 
-  setAlertLevel, 
+  config, 
+  setConfig, 
   isOpen, 
   toggleOpen 
 }) => {
@@ -34,14 +34,6 @@ const BroadcastReceiver: React.FC<BroadcastReceiverProps> = ({
     }
   };
 
-  const getLevelColor = (level: AlertLevel) => {
-    switch (level) {
-      case 'high': return 'bg-red-600 border-red-400 text-white animate-pulse';
-      case 'medium': return 'bg-yellow-600 border-yellow-400 text-black';
-      default: return 'bg-green-600 border-green-400 text-black';
-    }
-  };
-
   return (
     <div className={`fixed bottom-4 left-4 z-[1100] transition-all duration-300 flex flex-col items-start ${isOpen ? 'w-80' : 'w-auto'}`}>
       
@@ -51,7 +43,7 @@ const BroadcastReceiver: React.FC<BroadcastReceiverProps> = ({
         className="flex items-center gap-2 bg-gray-900 border-2 border-green-500/50 p-3 rounded-t-lg shadow-lg hover:bg-gray-800 transition-colors w-full justify-between backdrop-blur-md"
       >
         <div className="flex items-center gap-2 text-green-500">
-          <Radio className={`h-5 w-5 ${alertLevel === 'high' ? 'animate-ping' : ''}`} />
+          <Radio className={`h-5 w-5 ${config.enabled ? 'animate-pulse' : ''}`} />
           <span className="font-mono font-bold tracking-widest text-sm">SIGNAL_RECEIVER</span>
         </div>
         {isOpen ? <ChevronDown className="text-gray-500 h-4 w-4" /> : <ChevronUp className="text-gray-500 h-4 w-4" />}
@@ -67,17 +59,13 @@ const BroadcastReceiver: React.FC<BroadcastReceiverProps> = ({
               <Volume2 size={12} /> Live Feed
             </div>
             
-            <div className="flex gap-1">
-               {(['low', 'medium', 'high'] as AlertLevel[]).map((lvl) => (
-                 <button
-                   key={lvl}
-                   onClick={() => setAlertLevel(lvl)}
-                   className={`text-[10px] uppercase font-bold px-2 py-1 rounded border ${alertLevel === lvl ? getLevelColor(lvl) : 'bg-gray-800 border-gray-600 text-gray-500 hover:text-white'}`}
-                 >
-                   {lvl}
-                 </button>
-               ))}
-            </div>
+            <button
+               onClick={() => setConfig({ ...config, enabled: !config.enabled })}
+               className={`text-[10px] uppercase font-bold px-2 py-1 rounded border flex items-center gap-1 ${config.enabled ? 'bg-green-600 border-green-400 text-black' : 'bg-red-900/50 border-red-500 text-red-200'}`}
+             >
+               <Power size={10} />
+               {config.enabled ? 'RECEIVING' : 'OFFLINE'}
+             </button>
           </div>
 
           {/* Message Log */}
@@ -102,7 +90,7 @@ const BroadcastReceiver: React.FC<BroadcastReceiverProps> = ({
             ))}
             
             {/* Fake cursor at bottom */}
-            <div className="text-green-500 animate-pulse">_</div>
+            {config.enabled && <div className="text-green-500 animate-pulse">_</div>}
           </div>
 
           {/* Status Footer */}
@@ -110,7 +98,7 @@ const BroadcastReceiver: React.FC<BroadcastReceiverProps> = ({
              <span>FREQ: 148.500 MHz</span>
              <span className="flex items-center gap-1">
                <Activity size={10} />
-               {alertLevel === 'high' ? 'HIGH TRAFFIC' : 'STANDBY'}
+               {config.enabled ? 'SCANNING' : 'STANDBY'}
              </span>
           </div>
 
