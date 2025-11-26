@@ -55,10 +55,10 @@ export const generateSpotDescription = async (name: string, lat: number, lng: nu
   }
 };
 
-// 2. AI Moderation (Optimized)
+// 2. AI Moderation (Optimized & Refactored)
 export const moderateMarkerContent = async (name: string, description: string): Promise<ModerationResult> => {
   const ai = getClient();
-  if (!ai) return { status: 'approved', reason: "Dev Mode: Auto-approved." };
+  if (!ai) return { status: 'approved', reason: "Dev Mode: Auto-approved (No API Key)." };
 
   try {
     const prompt = `
@@ -74,14 +74,39 @@ export const moderateMarkerContent = async (name: string, description: string): 
       config: { responseMimeType: "application/json" }
     });
 
-    const result = JSON.parse(response.text || "{}");
+    let result;
+    try {
+      result = JSON.parse(response.text || "{}");
+    } catch (parseError) {
+      console.error("AI JSON Parse Error:", parseError);
+      return { 
+        status: 'error', 
+        reason: "AI response was malformed. Please try again or simplify your text." 
+      };
+    }
+
+    // Validate result structure
+    if (typeof result.approved !== 'boolean') {
+      return { status: 'error', reason: "Invalid AI response structure." };
+    }
+
     return result.approved 
-      ? { status: 'approved', reason: result.reason || "Verified." } 
-      : { status: 'rejected', reason: result.reason || "Invalid", suggestedFix: result.suggestedFix };
+      ? { status: 'approved', reason: result.reason || "Verified by AI." } 
+      : { 
+          status: 'rejected', 
+          reason: result.reason || "Content flagged by automated systems.", 
+          suggestedFix: result.suggestedFix 
+        };
 
   } catch (error) {
-    if (isQuotaError(error)) return { status: 'approved', reason: "SIMULATION: Auto-approved (Quota)." };
-    return { status: 'error', reason: "Service unavailable." };
+    if (isQuotaError(error)) {
+      // Graceful degradation for quota limits
+      console.warn("Gemini Quota Exceeded - Switching to Simulation Mode");
+      return { status: 'approved', reason: "SIMULATION: Auto-approved (Quota Limit Reached)." };
+    }
+    
+    console.error("Moderation API Error:", error);
+    return { status: 'error', reason: "Moderation service unavailable. Please check connection." };
   }
 };
 

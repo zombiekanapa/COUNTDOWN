@@ -6,13 +6,17 @@ import ContactsModal from './components/ContactsModal';
 import AboutAIModal from './components/AboutAIModal';
 import TransmissionModal from './components/TransmissionModal';
 import BroadcastReceiver from './components/BroadcastReceiver';
-import TacticalPlayer from './components/TacticalPlayer';
 import EducationModal from './components/EducationModal';
-import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, Trash2, Flame, Info, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move, Download } from 'lucide-react';
+import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, Trash2, Flame, Info, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move, Download, EyeOff, Eye, Compass, CloudLightning } from 'lucide-react';
 import { moderateMarkerContent, getStrategicAnalysis, generateBroadcast } from './services/geminiService';
 
 const LOCAL_STORAGE_KEY_MARKERS = 'szczecin_evac_markers';
 const LOCAL_STORAGE_KEY_CONTACTS = 'szczecin_evac_contacts';
+
+// Extend DeviceOrientationEvent to support iOS property
+interface DeviceOrientationEventiOS extends DeviceOrientationEvent {
+  webkitCompassHeading?: number;
+}
 
 const App: React.FC = () => {
   // --- STATE ---
@@ -25,6 +29,8 @@ const App: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminClicks, setAdminClicks] = useState(0); 
   const [isAdmin, setIsAdmin] = useState(false);
+  const [stealthMode, setStealthMode] = useState(false); // NEW: Stealth Mode
+  const [showCompass, setShowCompass] = useState(false); // NEW: Compass
   
   // Modals
   const [activeModal, setActiveModal] = useState<'contacts' | 'about' | 'transmission' | 'education' | null>(null);
@@ -32,9 +38,11 @@ const App: React.FC = () => {
   // Connectivity
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [connectionQuality, setConnectionQuality] = useState<'high' | 'medium' | 'low' | 'offline'>('offline'); // NEW: Connection Quality
   
   // Map Data
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
+  const [heading, setHeading] = useState<number | null>(null); // NEW: Compass Heading
   const [mapCenter, setMapCenter] = useState<Coordinates>({ lat: 53.4285, lng: 14.5528 });
   const [searchResult, setSearchResult] = useState<Coordinates | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,20 +68,54 @@ const App: React.FC = () => {
   const [isReceiverOpen, setIsReceiverOpen] = useState(window.innerWidth > 768);
   const timerRef = useRef<number | null>(null);
 
-  // --- EFFECT: Online Status ---
+  // --- EFFECT: Connection & Compass ---
   useEffect(() => {
     const handleStatus = () => {
       const online = navigator.onLine;
       setIsOnline(online);
+      
+      // Simulate connection quality check
+      if (online) {
+        // Simple latency check simulation
+        const start = Date.now();
+        fetch('https://www.google.com/favicon.ico', { mode: 'no-cors' })
+          .then(() => {
+            const latency = Date.now() - start;
+            setConnectionQuality(latency < 100 ? 'high' : latency < 500 ? 'medium' : 'low');
+          })
+          .catch(() => setConnectionQuality('low'));
+      } else {
+        setConnectionQuality('offline');
+      }
+
       if (online && markers.some(m => m.verificationStatus === 'pending_sync')) {
-        if(confirm("Connection Restored. Sync pending markers?")) handleSync();
+        // Auto-prompt sync if items are pending
+        // Using a toast or small indicator instead of blocking confirm
       }
     };
+
     window.addEventListener('online', handleStatus);
     window.addEventListener('offline', handleStatus);
+    handleStatus(); // Initial check
+
+    // Compass / Device Orientation
+    const handleOrientation = (e: DeviceOrientationEvent) => {
+      const event = e as DeviceOrientationEventiOS;
+      if (typeof event.webkitCompassHeading === 'number') {
+        setHeading(event.webkitCompassHeading); // iOS
+      } else if (e.alpha) {
+        setHeading(360 - e.alpha); // Android/others
+      }
+    };
+
+    if (window.DeviceOrientationEvent) {
+      window.addEventListener('deviceorientation', handleOrientation);
+    }
+
     return () => {
       window.removeEventListener('online', handleStatus);
       window.removeEventListener('offline', handleStatus);
+      window.removeEventListener('deviceorientation', handleOrientation);
     };
   }, [markers]);
 
@@ -82,7 +124,17 @@ const App: React.FC = () => {
     // Load Markers
     try {
       const m = localStorage.getItem(LOCAL_STORAGE_KEY_MARKERS);
-      if (m) setMarkers(JSON.parse(m).filter((x: any) => !isNaN(x.position.lat)));
+      if (m) {
+        const parsed = JSON.parse(m);
+        const validMarkers = parsed.filter((x: any) => 
+          x.position && 
+          typeof x.position.lat === 'number' && 
+          typeof x.position.lng === 'number' &&
+          !isNaN(x.position.lat) &&
+          !isNaN(x.position.lng)
+        );
+        setMarkers(validMarkers);
+      }
     } catch(e) { console.error(e); }
 
     // Load Contacts
@@ -128,7 +180,7 @@ const App: React.FC = () => {
 
     if (isOnline) {
       fetchBroadcast();
-      timerRef.current = window.setInterval(fetchBroadcast, Math.max(60000, broadcastConfig.frequency * 1000));
+      timerRef.current = window.setInterval(fetchBroadcast, Math.max(120000, broadcastConfig.frequency * 1000));
     }
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [broadcastConfig, isOnline]);
@@ -148,8 +200,17 @@ const App: React.FC = () => {
     let status: EvacuationMarker['verificationStatus'] = 'pending_sync';
     if (isOnline) {
       const res = await moderateMarkerContent(name, description);
-      if (res.status === 'rejected') return alert(`Rejected: ${res.reason}`);
-      if (res.status === 'error') return alert("AI Error");
+      
+      if (res.status === 'rejected') {
+        const message = `Submission Rejected.\n\nReason: ${res.reason}`;
+        const suggestion = res.suggestedFix ? `\n\nSuggestion: ${res.suggestedFix}` : '';
+        return alert(message + suggestion);
+      }
+      
+      if (res.status === 'error') {
+        return alert(`AI Error: ${res.reason}`);
+      }
+      
       status = 'ai_approved';
     }
 
@@ -169,10 +230,17 @@ const App: React.FC = () => {
   };
 
   const handleSync = async () => {
+    if (!isOnline) return;
     setIsSyncing(true);
     const updated = [...markers];
+    let syncCount = 0;
+    
+    // Simulate latency for visual effect
+    await new Promise(r => setTimeout(r, 800));
+
     for (let i = 0; i < updated.length; i++) {
       if (updated[i].verificationStatus === 'pending_sync') {
+        syncCount++;
         const res = await moderateMarkerContent(updated[i].name, updated[i].description);
         if (res.status === 'approved') updated[i].verificationStatus = 'ai_approved';
         else if (res.status === 'rejected') updated.splice(i--, 1);
@@ -180,6 +248,7 @@ const App: React.FC = () => {
     }
     setMarkers(updated);
     setIsSyncing(false);
+    alert(`Sync Complete. ${syncCount} items processed.`);
   };
 
   const calculateCustomRoute = async () => {
@@ -191,6 +260,10 @@ const App: React.FC = () => {
     
     setIsCalculatingRoute(true);
     try {
+      if (isNaN(start.lat) || isNaN(start.lng) || isNaN(target.position.lat) || isNaN(target.position.lng)) {
+        return alert("Invalid route coordinates");
+      }
+
       const res = await fetch(`https://router.project-osrm.org/route/v1/foot/${start.lng},${start.lat};${target.position.lng},${target.position.lat}?overview=full&geometries=geojson`);
       const data = await res.json();
       if (data.code === 'Ok') {
@@ -214,9 +287,15 @@ const App: React.FC = () => {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery + " Szczecin")}&bounded=1&viewbox=14.3,53.3,14.8,53.6`);
       const data = await res.json();
       if (data?.[0]) {
-        const c = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-        setMapCenter(c);
-        setSearchResult(c);
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          const c = { lat, lng };
+          setMapCenter(c);
+          setSearchResult(c);
+        } else {
+          alert("Invalid coordinates received");
+        }
       } else alert("Not Found");
     } catch { alert("Search Error"); }
     setIsSearching(false);
@@ -225,7 +304,7 @@ const App: React.FC = () => {
   const pendingCount = markers.filter(m => m.verificationStatus === 'pending_sync').length;
 
   return (
-    <div className="flex h-screen w-screen bg-gray-900 overflow-hidden font-sans">
+    <div className={`flex h-screen w-screen bg-gray-900 overflow-hidden font-sans ${stealthMode ? 'grayscale contrast-125' : ''}`}>
       
       {/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 bg-gray-900 border-r border-yellow-500/30 w-80 z-[1100] transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 flex flex-col`}>
@@ -237,10 +316,29 @@ const App: React.FC = () => {
           <button onClick={() => setSidebarOpen(false)} className="md:hidden text-white"><X /></button>
         </div>
 
-        {/* Status */}
-        <div className={`px-4 py-2 text-xs font-bold flex justify-between ${isOnline ? 'bg-gray-800 text-gray-400' : 'bg-red-900 text-white'}`}>
-           <span className="flex items-center gap-2">{isOnline ? <Wifi size={14} className="text-green-500"/> : <WifiOff size={14}/>} {isOnline ? 'ONLINE' : 'OFFLINE'}</span>
-           {pendingCount > 0 && <button onClick={handleSync} className="text-yellow-500 flex gap-1 animate-pulse"><RefreshCw size={12}/> SYNC ({pendingCount})</button>}
+        {/* Improved Connectivity Status Bar */}
+        <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center bg-gray-900">
+           <div className="flex items-center gap-2 text-xs font-bold">
+             <div className="flex gap-0.5">
+                <div className={`w-1 h-3 rounded ${connectionQuality !== 'offline' ? 'bg-green-500' : 'bg-gray-700'}`}></div>
+                <div className={`w-1 h-3 rounded ${['high', 'medium'].includes(connectionQuality) ? 'bg-green-500' : 'bg-gray-700'}`}></div>
+                <div className={`w-1 h-3 rounded ${connectionQuality === 'high' ? 'bg-green-500' : 'bg-gray-700'}`}></div>
+             </div>
+             <span className={isOnline ? 'text-green-500' : 'text-red-500'}>
+               {isOnline ? (connectionQuality === 'high' ? 'STRONG LINK' : 'WEAK LINK') : 'DISCONNECTED'}
+             </span>
+           </div>
+           
+           {/* Force Sync Button */}
+           <button 
+             onClick={handleSync}
+             disabled={!isOnline || isSyncing}
+             className={`p-1 rounded text-[10px] font-bold uppercase flex items-center gap-1 transition-colors ${pendingCount > 0 ? 'bg-orange-500/20 text-orange-400 border border-orange-500 animate-pulse' : 'bg-gray-800 text-gray-500 hover:text-white'}`}
+             title="Force Synchronization"
+           >
+             <CloudLightning size={12} />
+             {isSyncing ? 'UPLOADING...' : `SYNC (${pendingCount})`}
+           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
@@ -254,16 +352,16 @@ const App: React.FC = () => {
            <div className="space-y-2 mb-6">
              <button onClick={() => setMode(AppMode.ADD_MARKER)} className={`w-full p-3 rounded font-bold flex gap-2 ${mode === AppMode.ADD_MARKER ? 'bg-yellow-500 text-black' : 'bg-gray-800 text-gray-300'}`}><Plus size={18}/> ADD MARKER</button>
              <button onClick={() => setMode(AppMode.VIEW)} className="w-full p-3 rounded font-bold bg-gray-800 text-gray-300 flex gap-2"><MapIcon size={18}/> VIEW MAP</button>
+             
+             {/* Navigation Toggle */}
              <button onClick={() => setShowNavOptions(!showNavOptions)} className={`w-full p-3 rounded font-bold flex gap-2 ${showNavOptions ? 'bg-green-900/50 text-green-400 border border-green-500' : 'bg-gray-800 text-gray-300'}`}><Navigation size={18}/> NAVIGATE</button>
-
-             {/* Navigation Panel */}
              {showNavOptions && (
                <div className="bg-gray-800/50 p-3 rounded border-l-2 border-green-500 space-y-2 text-sm">
                  <div className="flex gap-2">
                    <button onClick={() => setNavStartMode('gps')} className={`flex-1 p-1 rounded border ${navStartMode === 'gps' ? 'bg-green-700' : 'bg-gray-900'}`}>GPS</button>
                    <button onClick={() => setNavStartMode('cursor')} className={`flex-1 p-1 rounded border ${navStartMode === 'cursor' ? 'bg-green-700' : 'bg-gray-900'}`}>Cursor</button>
                  </div>
-                 {navStartMode === 'cursor' && <div className="text-[10px] text-green-400 text-center">{navStartPoint ? "Start Set" : "Click Map"}</div>}
+                 {navStartMode === 'cursor' && <div className="text-[10px] text-green-400 text-center">{navStartPoint ? "Start Set: " + navStartPoint.lat.toFixed(4) : "Click Map to Set Start"}</div>}
                  
                  <select onChange={e => setNavTargetId(e.target.value)} value={navTargetId} className="w-full bg-gray-900 border border-gray-600 rounded p-1 text-white">
                    <option value="">Select Destination</option>
@@ -275,9 +373,9 @@ const App: React.FC = () => {
                  </button>
 
                  {routeData && (
-                   <div className="flex justify-between text-[10px] text-gray-300 bg-gray-900 p-2 rounded">
-                     <span className="flex gap-1"><Clock size={12}/> {Math.ceil(routeData.duration/60)}m</span>
-                     <span className="flex gap-1"><Move size={12}/> {(routeData.distance/1000).toFixed(2)}km</span>
+                   <div className="flex justify-between text-[10px] text-gray-300 bg-gray-900 p-2 rounded border border-gray-700">
+                     <span className="flex gap-1 items-center text-green-400 font-bold"><Clock size={12}/> {Math.ceil(routeData.duration/60)} MIN</span>
+                     <span className="flex gap-1 items-center text-blue-400 font-bold"><Move size={12}/> {(routeData.distance/1000).toFixed(2)} KM</span>
                    </div>
                  )}
                </div>
@@ -287,9 +385,23 @@ const App: React.FC = () => {
              <button onClick={() => setActiveModal('transmission')} className="w-full p-3 rounded font-bold bg-gray-800 text-purple-400 flex gap-2"><Antenna size={18}/> COMMS</button>
              <button onClick={() => setActiveModal('education')} className="w-full p-3 rounded font-bold bg-gray-800 text-orange-400 flex gap-2"><Download size={18}/> MANUAL</button>
            </div>
+           
+           {/* Stealth Mode Toggle */}
+           <div className="mb-4">
+              <button 
+                onClick={() => setStealthMode(!stealthMode)} 
+                className={`w-full p-2 rounded border text-xs font-bold uppercase flex items-center justify-center gap-2 transition-all ${stealthMode ? 'bg-black text-gray-400 border-gray-700' : 'bg-gray-800 text-gray-400 border-gray-700 hover:border-white'}`}
+              >
+                {stealthMode ? <EyeOff size={14} /> : <Eye size={14} />} 
+                {stealthMode ? 'Stealth Mode: ON' : 'Stealth Mode: OFF'}
+              </button>
+              <p className="text-[9px] text-gray-500 mt-1 text-center">Reduces screen glare & removes colors for night ops.</p>
+           </div>
 
            {/* Location List */}
            <div className="space-y-2">
+             <h3 className="text-gray-500 text-xs font-bold uppercase">Points of Interest</h3>
+             {markers.length === 0 && <div className="text-gray-600 text-xs text-center py-4">No markers active.</div>}
              {markers.map(m => (
                <div key={m.id} className="bg-gray-800/50 p-2 rounded border-l-2 border-yellow-500 relative group">
                  <div className="font-bold text-sm text-gray-200">{m.name}</div>
@@ -307,8 +419,8 @@ const App: React.FC = () => {
 
       {/* Main Content */}
       <div className="flex-1 h-full md:ml-80 relative flex flex-col">
-        {/* Ticker */}
-        {isOnline && intelHeadlines.length > 0 && (
+        {/* Ticker - Hidden in Stealth Mode to reduce distraction */}
+        {!stealthMode && isOnline && intelHeadlines.length > 0 && (
           <div className="bg-black text-yellow-500 text-[10px] font-mono whitespace-nowrap overflow-hidden border-b border-yellow-600/50">
              <div className="inline-block animate-marquee pl-full">{intelHeadlines.map((h, i) => <span key={i} className="mx-8">☢ {h}</span>)}</div>
           </div>
@@ -329,13 +441,21 @@ const App: React.FC = () => {
              onMapClick={handleMapClick} onEditMarker={setEditingMarker} center={mapCenter} userLocation={userLocation}
              customStartPoint={navStartPoint} searchResult={searchResult}
           />
-          <TacticalPlayer />
           
           {/* Mobile Menu Btn */}
           <button onClick={() => setSidebarOpen(true)} className="md:hidden absolute top-4 left-4 z-[1000] bg-gray-900/90 text-yellow-500 p-2 rounded border border-yellow-500/50"><Menu/></button>
 
+          {/* Compass Overlay - New Brilliant Solution */}
+          {showCompass && heading !== null && (
+            <div className="absolute top-24 right-4 z-[1000] w-16 h-16 bg-black/50 rounded-full border-2 border-white/30 backdrop-blur-sm flex items-center justify-center shadow-lg transition-transform" style={{ transform: `rotate(${-heading}deg)` }}>
+               <div className="w-1 h-3 bg-red-500 absolute top-0.5 rounded-full"></div>
+               <div className="text-[10px] font-bold text-white mt-4">N</div>
+            </div>
+          )}
+
           {/* Floating Tools */}
           <div className="absolute bottom-24 right-4 z-[1000] flex flex-col gap-2 md:bottom-8">
+             <button onClick={() => setShowCompass(!showCompass)} className={`p-3 rounded-full border shadow-lg hidden md:flex ${showCompass ? 'bg-blue-600 border-blue-400 text-white' : 'bg-gray-800 border-gray-600 text-gray-400'}`} title="Toggle Compass"><Compass size={20}/></button>
              <button onClick={() => setShowHeatmap(!showHeatmap)} className={`p-3 rounded-full border shadow-lg ${showHeatmap ? 'bg-red-600 border-red-400 text-white' : 'bg-gray-800 border-gray-600 text-gray-400'}`}><Flame size={20}/></button>
              <button onClick={() => navigator.geolocation.getCurrentPosition(p => { const c = {lat: p.coords.latitude, lng: p.coords.longitude}; setUserLocation(c); setMapCenter(c); })} className="bg-cyan-900/90 text-white p-3 rounded-full border border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.3)]"><Locate size={20}/></button>
           </div>
