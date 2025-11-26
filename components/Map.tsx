@@ -1,8 +1,8 @@
 import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, Circle, Polyline } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet';
 import L from 'leaflet';
-import { Coordinates, EvacuationMarker, AppMode, HazardZone, RouteData } from '../types';
-import { Navigation, Pencil } from 'lucide-react';
+import { Coordinates, EvacuationMarker, AppMode, HazardZone, RouteData, OfficialAlert } from '../types';
+import { Navigation, Pencil, Siren } from 'lucide-react';
 
 const DefaultIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
@@ -103,7 +103,9 @@ const SearchResultIcon = L.divIcon({
 interface MapProps {
   markers: EvacuationMarker[];
   hazardZones: HazardZone[];
+  officialAlerts?: OfficialAlert[];
   showHeatmap: boolean;
+  showAlerts?: boolean;
   routeData: RouteData | null;
   mode: AppMode;
   onMapClick: (pos: Coordinates) => void;
@@ -140,7 +142,7 @@ const RouteFitter: React.FC<{ coords: Coordinates[] }> = ({ coords }) => {
   const map = useMap();
   useEffect(() => {
     if (coords && coords.length > 0) {
-      const validCoords = coords.filter(c => typeof c.lat === 'number' && typeof c.lng === 'number');
+      const validCoords = coords.filter(c => typeof c.lat === 'number' && typeof c.lng === 'number' && !isNaN(c.lat) && !isNaN(c.lng));
       if (validCoords.length > 0) {
         const bounds = L.latLngBounds(validCoords.map(c => [c.lat, c.lng]));
         map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 1.5 });
@@ -158,7 +160,9 @@ const isValidCoord = (c: Coordinates | null | undefined): boolean => {
 const MapComponent: React.FC<MapProps> = ({ 
   markers, 
   hazardZones,
+  officialAlerts,
   showHeatmap,
+  showAlerts,
   routeData,
   mode, 
   onMapClick, 
@@ -180,11 +184,10 @@ const MapComponent: React.FC<MapProps> = ({
     }
   };
 
-  // Ensure center is valid to prevent MapContainer crash
   const safeCenter: [number, number] = 
     isValidCoord(center)
       ? [center.lat, center.lng] 
-      : [53.4285, 14.5528]; // Fallback to Szczecin default
+      : [53.4285, 14.5528];
 
   return (
     <MapContainer 
@@ -201,12 +204,10 @@ const MapComponent: React.FC<MapProps> = ({
       {isValidCoord(center) && <MapController coords={center} />}
       <MapEvents onClick={onMapClick} mode={mode} />
       
-      {/* Auto-Zoom to Route */}
       {routeData && routeData.coordinates.length > 0 && (
         <RouteFitter coords={routeData.coordinates} />
       )}
 
-      {/* User Location Marker */}
       {isValidCoord(userLocation) && userLocation && (
         <>
           <Marker position={[userLocation.lat, userLocation.lng]} icon={UserIcon}>
@@ -222,7 +223,6 @@ const MapComponent: React.FC<MapProps> = ({
         </>
       )}
 
-      {/* Custom Start Point (for routing) */}
       {isValidCoord(customStartPoint) && customStartPoint && (
         <Marker position={[customStartPoint.lat, customStartPoint.lng]} icon={StartPointIcon} zIndexOffset={100}>
            <Popup>
@@ -231,22 +231,17 @@ const MapComponent: React.FC<MapProps> = ({
         </Marker>
       )}
 
-      {/* Search Result HUD Crosshair */}
       {isValidCoord(searchResult) && searchResult && (
          <Marker position={[searchResult.lat, searchResult.lng]} icon={SearchResultIcon} zIndexOffset={1000} />
       )}
 
-      {/* Evacuation Route Polyline */}
       {routeData && (
         <Polyline
           positions={routeData.coordinates.filter(c => isValidCoord(c)).map(c => [c.lat, c.lng])}
           pathOptions={{ color: '#10b981', weight: 6, opacity: 0.8, lineCap: 'round', lineJoin: 'round' }}
-        >
-          {/* Popup removed here as info is now in Sidebar */}
-        </Polyline>
+        />
       )}
 
-      {/* Hazard Heatmap Zones - Filter invalid coords */}
       {showHeatmap && hazardZones.map((zone) => {
         if (!isValidCoord(zone.position)) return null;
         return (
@@ -255,16 +250,17 @@ const MapComponent: React.FC<MapProps> = ({
             center={[zone.position.lat, zone.position.lng]}
             radius={zone.radius || 500}
             pathOptions={{
-              color: getHazardColor(zone.riskLevel),
-              fillColor: getHazardColor(zone.riskLevel),
+              color: zone.zoneType === 'safe' ? '#22c55e' : getHazardColor(zone.riskLevel),
+              fillColor: zone.zoneType === 'safe' ? '#22c55e' : getHazardColor(zone.riskLevel),
               fillOpacity: 0.3,
-              weight: 1
+              weight: 1,
+              dashArray: zone.zoneType === 'safe' ? '5,5' : undefined
             }}
           >
             <Popup>
               <div className="p-1">
-                <h3 className="font-bold text-red-500 uppercase flex items-center gap-2">
-                  ⚠️ High Risk Zone
+                <h3 className={`font-bold uppercase flex items-center gap-2 ${zone.zoneType === 'safe' ? 'text-green-500' : 'text-red-500'}`}>
+                  {zone.zoneType === 'safe' ? '🛡️ Safe Zone' : '⚠️ High Risk Zone'}
                 </h3>
                 <p className="text-xs text-gray-300 font-bold">{zone.category.toUpperCase()}</p>
                 <p className="text-sm text-gray-200 mt-1">{zone.description}</p>
@@ -274,7 +270,41 @@ const MapComponent: React.FC<MapProps> = ({
         );
       })}
 
-      {/* Evacuation Markers - Filter invalid coords */}
+      {/* Official Government Alerts Layer */}
+      {showAlerts && officialAlerts && officialAlerts.map(alert => {
+        const positions: [number, number][] = alert.area.map(c => [c.lat, c.lng]);
+        if (positions.length < 3) return null; // Need 3 points for a polygon
+        
+        return (
+          <Polygon 
+            key={alert.id}
+            positions={positions}
+            pathOptions={{ 
+              color: '#ef4444', 
+              fillColor: '#ef4444', 
+              fillOpacity: 0.2, 
+              weight: 2, 
+              dashArray: '10, 5',
+              className: 'hazard-pulse' // Use existing CSS animation
+            }}
+          >
+            <Popup>
+              <div className="p-1 border-l-4 border-red-500 pl-2">
+                 <h3 className="font-bold text-red-500 uppercase flex items-center gap-2 text-sm">
+                   <Siren size={14} className="animate-pulse" /> OFFICIAL ALERT
+                 </h3>
+                 <div className="text-xs text-gray-400 font-mono mb-1">{alert.source} // {new Date(alert.timestamp).toLocaleTimeString()}</div>
+                 <h4 className="font-bold text-white mb-1">{alert.title}</h4>
+                 <p className="text-xs text-gray-300 mb-2">{alert.instructions}</p>
+                 <div className="bg-red-900/40 text-red-200 text-[10px] p-1 rounded uppercase font-bold text-center">
+                   Compliance Mandatory
+                 </div>
+              </div>
+            </Popup>
+          </Polygon>
+        );
+      })}
+
       {markers.map((marker) => {
         if (!isValidCoord(marker.position)) return null;
         return (

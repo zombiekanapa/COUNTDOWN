@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { HazardZone, IntelReport, AlertLevel, BroadcastMessage } from "../types";
+import { HazardZone, IntelReport, AlertLevel, BroadcastMessage, OfficialAlert } from "../types";
 
 const getClient = () => {
   const apiKey = process.env.API_KEY;
@@ -28,6 +28,23 @@ const MOCK_BROADCASTS = {
   medium: ["TRAFFIC ALERT", "CHECKPOINTS ACTIVE", "VISIBILITY REDUCED"],
   high: ["EVACUATE SECTOR 9", "CHEMICAL ALARM", "SHELTER IN PLACE"]
 };
+
+const MOCK_ALERTS: OfficialAlert[] = [
+  {
+    id: 'alert-sim-1',
+    title: 'Flood Warning (Odra)',
+    source: 'RCB',
+    severity: 'warning',
+    timestamp: Date.now(),
+    instructions: 'Avoid river banks. Prepare sandbags.',
+    area: [
+      { lat: 53.425, lng: 14.560 },
+      { lat: 53.430, lng: 14.565 },
+      { lat: 53.420, lng: 14.570 },
+      { lat: 53.415, lng: 14.560 }
+    ]
+  }
+];
 
 const isQuotaError = (error: any) => {
   const str = JSON.stringify(error);
@@ -100,7 +117,6 @@ export const moderateMarkerContent = async (name: string, description: string): 
 
   } catch (error) {
     if (isQuotaError(error)) {
-      // Graceful degradation for quota limits
       console.warn("Gemini Quota Exceeded - Switching to Simulation Mode");
       return { status: 'approved', reason: "SIMULATION: Auto-approved (Quota Limit Reached)." };
     }
@@ -116,7 +132,8 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
   const fallbackData: IntelReport = {
     zones: MOCK_ZONES,
     headlines: MOCK_HEADLINES,
-    defcon: { level: 4, description: "SIMULATION MODE ACTIVE" }
+    defcon: { level: 4, description: "SIMULATION MODE ACTIVE" },
+    officialAlerts: MOCK_ALERTS
   };
 
   if (!ai) return fallbackData;
@@ -128,6 +145,7 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
       2. List 2 safe zones (zoneType='safe').
       3. 3 short headlines.
       4. DEFCON level (1-5).
+      5. List 1 Official Alert (title, source, severity, instructions, area as array of 4 lat/lng coords).
       Return JSON.
     `;
 
@@ -142,10 +160,16 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
         ...z, id: `ai-${i}`, position: { lat: Number(z.lat), lng: Number(z.lng) }, radius: Number(z.radius)
     })).filter((z: any) => !isNaN(z.position.lat));
 
+    // Handle alerts
+    const alerts = (data.officialAlerts || []).map((a: any, i: number) => ({
+      ...a, id: `off-alert-${i}`, timestamp: Date.now()
+    }));
+
     return {
       zones: zones.length ? zones : fallbackData.zones,
       headlines: data.headlines || fallbackData.headlines,
-      defcon: data.defcon || fallbackData.defcon
+      defcon: data.defcon || fallbackData.defcon,
+      officialAlerts: alerts.length ? alerts : fallbackData.officialAlerts
     };
   } catch (error) {
     return fallbackData;

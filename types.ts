@@ -15,6 +15,16 @@ export interface HazardZone {
   zoneType?: 'danger' | 'safe';
 }
 
+export interface OfficialAlert {
+  id: string;
+  title: string;
+  source: string; // e.g., "RCB", "City Hall"
+  severity: 'critical' | 'warning' | 'info';
+  area: Coordinates[]; // Polygon
+  timestamp: number;
+  instructions: string;
+}
+
 export interface EvacuationMarker {
   id: string;
   name: string;
@@ -31,8 +41,9 @@ export interface EmergencyContact {
   name: string;
   phone: string;
   email?: string;
-  network?: string; // e.g., "Signal: @username", "Telegram: @handle"
+  network?: string; 
   role: 'family' | 'medic' | 'squad' | 'other';
+  preferredMethod?: 'sms' | 'whatsapp' | 'signal' | 'email';
 }
 
 export interface RouteData {
@@ -49,6 +60,7 @@ export interface IntelReport {
     level: 1 | 2 | 3 | 4 | 5;
     description: string;
   };
+  officialAlerts?: OfficialAlert[];
 }
 
 export type AlertLevel = 'low' | 'medium' | 'high';

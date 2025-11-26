@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Coordinates, EvacuationMarker, AppMode, EmergencyContact, HazardZone, RouteData, AlertLevel, BroadcastMessage, BroadcastConfig } from './types';
+import { Coordinates, EvacuationMarker, AppMode, EmergencyContact, HazardZone, RouteData, AlertLevel, BroadcastMessage, BroadcastConfig, OfficialAlert } from './types';
 import MapComponent from './components/Map';
 import MarkerModal from './components/MarkerModal';
 import ContactsModal from './components/ContactsModal';
@@ -7,7 +7,8 @@ import AboutAIModal from './components/AboutAIModal';
 import TransmissionModal from './components/TransmissionModal';
 import BroadcastReceiver from './components/BroadcastReceiver';
 import EducationModal from './components/EducationModal';
-import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, Trash2, Flame, Info, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move, Download, EyeOff, Eye, Compass, CloudLightning } from 'lucide-react';
+import TacticalPlayer from './components/TacticalPlayer';
+import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, Trash2, Flame, Info, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move, Download, EyeOff, Eye, Compass, CloudLightning, Siren } from 'lucide-react';
 import { moderateMarkerContent, getStrategicAnalysis, generateBroadcast } from './services/geminiService';
 
 const LOCAL_STORAGE_KEY_MARKERS = 'szczecin_evac_markers';
@@ -29,8 +30,8 @@ const App: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminClicks, setAdminClicks] = useState(0); 
   const [isAdmin, setIsAdmin] = useState(false);
-  const [stealthMode, setStealthMode] = useState(false); // NEW: Stealth Mode
-  const [showCompass, setShowCompass] = useState(false); // NEW: Compass
+  const [stealthMode, setStealthMode] = useState(false);
+  const [showCompass, setShowCompass] = useState(false);
   
   // Modals
   const [activeModal, setActiveModal] = useState<'contacts' | 'about' | 'transmission' | 'education' | null>(null);
@@ -38,11 +39,11 @@ const App: React.FC = () => {
   // Connectivity
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [connectionQuality, setConnectionQuality] = useState<'high' | 'medium' | 'low' | 'offline'>('offline'); // NEW: Connection Quality
+  const [connectionQuality, setConnectionQuality] = useState<'high' | 'medium' | 'low' | 'offline'>('offline');
   
   // Map Data
   const [userLocation, setUserLocation] = useState<Coordinates | null>(null);
-  const [heading, setHeading] = useState<number | null>(null); // NEW: Compass Heading
+  const [heading, setHeading] = useState<number | null>(null);
   const [mapCenter, setMapCenter] = useState<Coordinates>({ lat: 53.4285, lng: 14.5528 });
   const [searchResult, setSearchResult] = useState<Coordinates | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,7 +53,9 @@ const App: React.FC = () => {
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [incomingContacts, setIncomingContacts] = useState<EmergencyContact[] | null>(null);
   const [hazardZones, setHazardZones] = useState<HazardZone[]>([]);
+  const [officialAlerts, setOfficialAlerts] = useState<OfficialAlert[]>([]);
   const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(true); // Default to showing alerts
   const [intelHeadlines, setIntelHeadlines] = useState<string[]>([]);
   const [defcon, setDefcon] = useState({level: 5, description: "Loading..."});
   const [routeData, setRouteData] = useState<RouteData | null>(null);
@@ -74,9 +77,7 @@ const App: React.FC = () => {
       const online = navigator.onLine;
       setIsOnline(online);
       
-      // Simulate connection quality check
       if (online) {
-        // Simple latency check simulation
         const start = Date.now();
         fetch('https://www.google.com/favicon.ico', { mode: 'no-cors' })
           .then(() => {
@@ -87,24 +88,18 @@ const App: React.FC = () => {
       } else {
         setConnectionQuality('offline');
       }
-
-      if (online && markers.some(m => m.verificationStatus === 'pending_sync')) {
-        // Auto-prompt sync if items are pending
-        // Using a toast or small indicator instead of blocking confirm
-      }
     };
 
     window.addEventListener('online', handleStatus);
     window.addEventListener('offline', handleStatus);
-    handleStatus(); // Initial check
+    handleStatus();
 
-    // Compass / Device Orientation
     const handleOrientation = (e: DeviceOrientationEvent) => {
       const event = e as DeviceOrientationEventiOS;
       if (typeof event.webkitCompassHeading === 'number') {
-        setHeading(event.webkitCompassHeading); // iOS
+        setHeading(event.webkitCompassHeading);
       } else if (e.alpha) {
-        setHeading(360 - e.alpha); // Android/others
+        setHeading(360 - e.alpha);
       }
     };
 
@@ -121,7 +116,6 @@ const App: React.FC = () => {
 
   // --- EFFECT: Init Data ---
   useEffect(() => {
-    // Load Markers
     try {
       const m = localStorage.getItem(LOCAL_STORAGE_KEY_MARKERS);
       if (m) {
@@ -137,13 +131,11 @@ const App: React.FC = () => {
       }
     } catch(e) { console.error(e); }
 
-    // Load Contacts
     try {
       const c = localStorage.getItem(LOCAL_STORAGE_KEY_CONTACTS);
       if (c) setContacts(JSON.parse(c));
     } catch(e) { console.error(e); }
 
-    // Check Roster Link
     const rosterHash = new URLSearchParams(window.location.search).get('roster');
     if (rosterHash) {
       try {
@@ -154,21 +146,19 @@ const App: React.FC = () => {
       } catch(e) {}
     }
 
-    // AI Intel
     if (navigator.onLine) {
        getStrategicAnalysis().then(report => {
          setHazardZones(report.zones);
          setIntelHeadlines(report.headlines);
          setDefcon(report.defcon);
+         if (report.officialAlerts) setOfficialAlerts(report.officialAlerts);
        });
     }
   }, []);
 
-  // --- EFFECT: Save Data ---
   useEffect(() => { if(markers.length) localStorage.setItem(LOCAL_STORAGE_KEY_MARKERS, JSON.stringify(markers)); }, [markers]);
   useEffect(() => { localStorage.setItem(LOCAL_STORAGE_KEY_CONTACTS, JSON.stringify(contacts)); }, [contacts]);
 
-  // --- EFFECT: Broadcast Loop ---
   useEffect(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     if (!broadcastConfig.enabled) return;
@@ -185,7 +175,6 @@ const App: React.FC = () => {
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [broadcastConfig, isOnline]);
 
-  // --- ACTIONS ---
   const handleLogoClick = () => {
     setAdminClicks(prev => prev + 1);
     if (adminClicks + 1 === 5) { setIsAdmin(true); alert("Admin Mode Unlocked"); }
@@ -235,7 +224,6 @@ const App: React.FC = () => {
     const updated = [...markers];
     let syncCount = 0;
     
-    // Simulate latency for visual effect
     await new Promise(r => setTimeout(r, 800));
 
     for (let i = 0; i < updated.length; i++) {
@@ -306,7 +294,6 @@ const App: React.FC = () => {
   return (
     <div className={`flex h-screen w-screen bg-gray-900 overflow-hidden font-sans ${stealthMode ? 'grayscale contrast-125' : ''}`}>
       
-      {/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 bg-gray-900 border-r border-yellow-500/30 w-80 z-[1100] transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 flex flex-col`}>
         <div className="p-4 border-b border-yellow-500/30 flex justify-between items-center">
           <div onClick={handleLogoClick} className="flex items-center gap-2 text-yellow-500 cursor-pointer">
@@ -316,7 +303,6 @@ const App: React.FC = () => {
           <button onClick={() => setSidebarOpen(false)} className="md:hidden text-white"><X /></button>
         </div>
 
-        {/* Improved Connectivity Status Bar */}
         <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center bg-gray-900">
            <div className="flex items-center gap-2 text-xs font-bold">
              <div className="flex gap-0.5">
@@ -329,7 +315,6 @@ const App: React.FC = () => {
              </span>
            </div>
            
-           {/* Force Sync Button */}
            <button 
              onClick={handleSync}
              disabled={!isOnline || isSyncing}
@@ -342,18 +327,15 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-           {/* Defcon */}
            <div onClick={() => setActiveModal('about')} className={`mb-6 p-4 rounded text-center border cursor-pointer hover:scale-105 transition-transform ${defcon.level <= 2 ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}>
               <h2 className="text-3xl font-black">DEFCON {defcon.level}</h2>
               <div className="text-[9px] uppercase">{defcon.description}</div>
            </div>
 
-           {/* Commands */}
            <div className="space-y-2 mb-6">
              <button onClick={() => setMode(AppMode.ADD_MARKER)} className={`w-full p-3 rounded font-bold flex gap-2 ${mode === AppMode.ADD_MARKER ? 'bg-yellow-500 text-black' : 'bg-gray-800 text-gray-300'}`}><Plus size={18}/> ADD MARKER</button>
              <button onClick={() => setMode(AppMode.VIEW)} className="w-full p-3 rounded font-bold bg-gray-800 text-gray-300 flex gap-2"><MapIcon size={18}/> VIEW MAP</button>
              
-             {/* Navigation Toggle */}
              <button onClick={() => setShowNavOptions(!showNavOptions)} className={`w-full p-3 rounded font-bold flex gap-2 ${showNavOptions ? 'bg-green-900/50 text-green-400 border border-green-500' : 'bg-gray-800 text-gray-300'}`}><Navigation size={18}/> NAVIGATE</button>
              {showNavOptions && (
                <div className="bg-gray-800/50 p-3 rounded border-l-2 border-green-500 space-y-2 text-sm">
@@ -386,7 +368,6 @@ const App: React.FC = () => {
              <button onClick={() => setActiveModal('education')} className="w-full p-3 rounded font-bold bg-gray-800 text-orange-400 flex gap-2"><Download size={18}/> MANUAL</button>
            </div>
            
-           {/* Stealth Mode Toggle */}
            <div className="mb-4">
               <button 
                 onClick={() => setStealthMode(!stealthMode)} 
@@ -398,7 +379,6 @@ const App: React.FC = () => {
               <p className="text-[9px] text-gray-500 mt-1 text-center">Reduces screen glare & removes colors for night ops.</p>
            </div>
 
-           {/* Location List */}
            <div className="space-y-2">
              <h3 className="text-gray-500 text-xs font-bold uppercase">Points of Interest</h3>
              {markers.length === 0 && <div className="text-gray-600 text-xs text-center py-4">No markers active.</div>}
@@ -417,16 +397,13 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 h-full md:ml-80 relative flex flex-col">
-        {/* Ticker - Hidden in Stealth Mode to reduce distraction */}
         {!stealthMode && isOnline && intelHeadlines.length > 0 && (
           <div className="bg-black text-yellow-500 text-[10px] font-mono whitespace-nowrap overflow-hidden border-b border-yellow-600/50">
              <div className="inline-block animate-marquee pl-full">{intelHeadlines.map((h, i) => <span key={i} className="mx-8">☢ {h}</span>)}</div>
           </div>
         )}
 
-        {/* Search */}
         <div className="absolute top-10 left-1/2 -translate-x-1/2 w-3/4 max-w-sm z-[1000]">
            <form onSubmit={handleSearch} className="relative">
              <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} disabled={!isOnline} className="w-full bg-gray-900/90 text-white pl-3 pr-10 py-2 rounded-lg border border-yellow-500/30 focus:border-yellow-500 outline-none backdrop-blur-sm" placeholder="Search Szczecin..." />
@@ -434,40 +411,41 @@ const App: React.FC = () => {
            </form>
         </div>
 
-        {/* Map */}
         <div className="flex-1 relative">
           <MapComponent 
-             markers={markers} hazardZones={hazardZones} showHeatmap={showHeatmap} routeData={routeData} mode={mode}
+             markers={markers} hazardZones={hazardZones} officialAlerts={officialAlerts} 
+             showHeatmap={showHeatmap} showAlerts={showAlerts} routeData={routeData} mode={mode}
              onMapClick={handleMapClick} onEditMarker={setEditingMarker} center={mapCenter} userLocation={userLocation}
              customStartPoint={navStartPoint} searchResult={searchResult}
           />
           
-          {/* Mobile Menu Btn */}
           <button onClick={() => setSidebarOpen(true)} className="md:hidden absolute top-4 left-4 z-[1000] bg-gray-900/90 text-yellow-500 p-2 rounded border border-yellow-500/50"><Menu/></button>
 
-          {/* Compass Overlay - New Brilliant Solution */}
           {showCompass && heading !== null && (
             <div className="absolute top-24 right-4 z-[1000] w-16 h-16 bg-black/50 rounded-full border-2 border-white/30 backdrop-blur-sm flex items-center justify-center shadow-lg transition-transform" style={{ transform: `rotate(${-heading}deg)` }}>
                <div className="w-1 h-3 bg-red-500 absolute top-0.5 rounded-full"></div>
                <div className="text-[10px] font-bold text-white mt-4">N</div>
             </div>
           )}
+          
+          <TacticalPlayer />
 
-          {/* Floating Tools */}
           <div className="absolute bottom-24 right-4 z-[1000] flex flex-col gap-2 md:bottom-8">
              <button onClick={() => setShowCompass(!showCompass)} className={`p-3 rounded-full border shadow-lg hidden md:flex ${showCompass ? 'bg-blue-600 border-blue-400 text-white' : 'bg-gray-800 border-gray-600 text-gray-400'}`} title="Toggle Compass"><Compass size={20}/></button>
-             <button onClick={() => setShowHeatmap(!showHeatmap)} className={`p-3 rounded-full border shadow-lg ${showHeatmap ? 'bg-red-600 border-red-400 text-white' : 'bg-gray-800 border-gray-600 text-gray-400'}`}><Flame size={20}/></button>
+             
+             {/* Alert Toggle */}
+             <button onClick={() => setShowAlerts(!showAlerts)} className={`p-3 rounded-full border shadow-lg ${showAlerts ? 'bg-red-600 border-red-400 text-white animate-pulse' : 'bg-gray-800 border-gray-600 text-gray-400'}`} title="Gov Alerts"><Siren size={20}/></button>
+             
+             <button onClick={() => setShowHeatmap(!showHeatmap)} className={`p-3 rounded-full border shadow-lg ${showHeatmap ? 'bg-orange-600 border-orange-400 text-white' : 'bg-gray-800 border-gray-600 text-gray-400'}`} title="Heatmap"><Flame size={20}/></button>
              <button onClick={() => navigator.geolocation.getCurrentPosition(p => { const c = {lat: p.coords.latitude, lng: p.coords.longitude}; setUserLocation(c); setMapCenter(c); })} className="bg-cyan-900/90 text-white p-3 rounded-full border border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.3)]"><Locate size={20}/></button>
           </div>
           
-          {/* Add Marker Hint */}
           {mode === AppMode.ADD_MARKER && <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-[1000] bg-yellow-500 text-black px-4 py-2 rounded-full font-bold shadow-lg animate-bounce text-xs">CLICK MAP TO PLACE</div>}
         </div>
       </div>
 
       <BroadcastReceiver messages={broadcasts} config={broadcastConfig} setConfig={setBroadcastConfig} isOpen={isReceiverOpen} toggleOpen={() => setIsReceiverOpen(!isReceiverOpen)} />
 
-      {/* Modals */}
       {(tempMarkerPos || editingMarker) && (
         <MarkerModal
           position={editingMarker ? editingMarker.position : tempMarkerPos!}
