@@ -10,9 +10,7 @@ import EducationModal from './components/EducationModal';
 import TacticalPlayer from './components/TacticalPlayer';
 import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, Trash2, Flame, Info, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move, Download, EyeOff, Eye, Compass, CloudLightning, Siren } from 'lucide-react';
 import { moderateMarkerContent, getStrategicAnalysis, generateBroadcast } from './services/geminiService';
-
-const LOCAL_STORAGE_KEY_MARKERS = 'szczecin_evac_markers';
-const LOCAL_STORAGE_KEY_CONTACTS = 'szczecin_evac_contacts';
+import { listenToMarkers, addMarker, updateMarker, deleteMarker, listenToContacts, addContact, deleteContact } from './services/firebaseService';
 
 // Extend DeviceOrientationEvent to support iOS property
 interface DeviceOrientationEventiOS extends DeviceOrientationEvent {
@@ -116,25 +114,8 @@ const App: React.FC = () => {
 
   // --- EFFECT: Init Data ---
   useEffect(() => {
-    try {
-      const m = localStorage.getItem(LOCAL_STORAGE_KEY_MARKERS);
-      if (m) {
-        const parsed = JSON.parse(m);
-        const validMarkers = parsed.filter((x: any) => 
-          x.position && 
-          typeof x.position.lat === 'number' && 
-          typeof x.position.lng === 'number' &&
-          !isNaN(x.position.lat) &&
-          !isNaN(x.position.lng)
-        );
-        setMarkers(validMarkers);
-      }
-    } catch(e) { console.error(e); }
-
-    try {
-      const c = localStorage.getItem(LOCAL_STORAGE_KEY_CONTACTS);
-      if (c) setContacts(JSON.parse(c));
-    } catch(e) { console.error(e); }
+    const unsubscribeMarkers = listenToMarkers(setMarkers);
+    const unsubscribeContacts = listenToContacts(setContacts);
 
     const rosterHash = new URLSearchParams(window.location.search).get('roster');
     if (rosterHash) {
@@ -154,10 +135,12 @@ const App: React.FC = () => {
          if (report.officialAlerts) setOfficialAlerts(report.officialAlerts);
        });
     }
-  }, []);
 
-  useEffect(() => { if(markers.length) localStorage.setItem(LOCAL_STORAGE_KEY_MARKERS, JSON.stringify(markers)); }, [markers]);
-  useEffect(() => { localStorage.setItem(LOCAL_STORAGE_KEY_CONTACTS, JSON.stringify(contacts)); }, [contacts]);
+    return () => {
+      unsubscribeMarkers();
+      unsubscribeContacts();
+    };
+  }, []);
 
   useEffect(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
@@ -203,16 +186,24 @@ const App: React.FC = () => {
       status = 'ai_approved';
     }
 
-    const newM = {
-      id: editingMarker?.id || crypto.randomUUID(),
-      name, description, type,
-      position: tempMarkerPos || editingMarker!.position,
-      createdAt: Date.now(),
-      verificationStatus: status,
-      authorName: 'Scout'
-    } as EvacuationMarker;
+    if (editingMarker) {
+      const updatedM = {
+        ...editingMarker,
+        name, description, type,
+        verificationStatus: status,
+      };
+      updateMarker(updatedM);
+    } else if (tempMarkerPos) {
+      const newM = {
+        name, description, type,
+        position: tempMarkerPos,
+        createdAt: Date.now(),
+        verificationStatus: status,
+        authorName: 'Scout'
+      };
+      addMarker(newM);
+    }
 
-    setMarkers(prev => editingMarker ? prev.map(m => m.id === editingMarker.id ? newM : m) : [...prev, newM]);
     setTempMarkerPos(null);
     setEditingMarker(null);
     setMode(AppMode.VIEW);
@@ -226,15 +217,17 @@ const App: React.FC = () => {
     
     await new Promise(r => setTimeout(r, 800));
 
-    for (let i = 0; i < updated.length; i++) {
-      if (updated[i].verificationStatus === 'pending_sync') {
+    for (const marker of markers) {
+      if (marker.verificationStatus === 'pending_sync') {
         syncCount++;
-        const res = await moderateMarkerContent(updated[i].name, updated[i].description);
-        if (res.status === 'approved') updated[i].verificationStatus = 'ai_approved';
-        else if (res.status === 'rejected') updated.splice(i--, 1);
+        const res = await moderateMarkerContent(marker.name, marker.description);
+        if (res.status === 'approved') {
+          updateMarker({ ...marker, verificationStatus: 'ai_approved' });
+        } else if (res.status === 'rejected') {
+          deleteMarker(marker.id);
+        }
       }
     }
-    setMarkers(updated);
     setIsSyncing(false);
     alert(`Sync Complete. ${syncCount} items processed.`);
   };
@@ -390,7 +383,7 @@ const App: React.FC = () => {
                     <button onClick={() => setMapCenter(m.position)} className="text-[10px] text-cyan-400 uppercase font-bold flex gap-1"><Locate size={10}/> Jump</button>
                     <button onClick={() => setEditingMarker(m)} className="text-[10px] text-yellow-500 uppercase font-bold flex gap-1">Edit</button>
                  </div>
-                 {isAdmin && <button onClick={() => setMarkers(prev => prev.filter(x => x.id !== m.id))} className="absolute top-2 right-2 text-red-500 hover:text-red-400"><Trash2 size={12}/></button>}
+                 {isAdmin && <button onClick={() => deleteMarker(m.id)} className="absolute top-2 right-2 text-red-500 hover:text-red-400"><Trash2 size={12}/></button>}
                </div>
              ))}
            </div>
@@ -455,7 +448,7 @@ const App: React.FC = () => {
         />
       )}
 
-      {activeModal === 'contacts' && <ContactsModal contacts={incomingContacts || contacts} onAdd={c => setContacts([...contacts, c])} onDelete={id => setContacts(contacts.filter(c => c.id !== id))} onClose={() => {setActiveModal(null); setIncomingContacts(null);}} currentLocation={userLocation} hazardZones={hazardZones} importedContacts={incomingContacts || undefined} onImport={c => { setContacts(p => [...p, ...c]); setIncomingContacts(null); }} />}
+      {activeModal === 'contacts' && <ContactsModal contacts={incomingContacts || contacts} onAdd={addContact} onDelete={deleteContact} onClose={() => {setActiveModal(null); setIncomingContacts(null);}} currentLocation={userLocation} hazardZones={hazardZones} importedContacts={incomingContacts || undefined} onImport={c => { c.forEach(addContact); setIncomingContacts(null); }} />}
       {activeModal === 'about' && <AboutAIModal onClose={() => setActiveModal(null)} />}
       {activeModal === 'transmission' && <TransmissionModal onClose={() => setActiveModal(null)} />}
       {activeModal === 'education' && <EducationModal onClose={() => setActiveModal(null)} />}
