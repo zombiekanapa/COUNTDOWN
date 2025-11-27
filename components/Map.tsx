@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import { Coordinates, EvacuationMarker, AppMode, HazardZone, RouteData, OfficialAlert } from '../types';
-import { Navigation, Pencil, Siren } from 'lucide-react';
+import { Navigation, Pencil, Siren, MessageSquareText } from 'lucide-react';
 
 const DefaultIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
@@ -100,6 +100,31 @@ const SearchResultIcon = L.divIcon({
   iconAnchor: [25, 25]
 });
 
+// Message Board Icon
+const messageBoardIconHtml = `
+  <div style="
+    background-color: #eab308;
+    border: 2px solid #fff;
+    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: black;
+    box-shadow: 0 0 10px rgba(234, 179, 8, 0.6);
+  ">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+  </div>
+`;
+
+const MessageBoardIcon = L.divIcon({
+  html: messageBoardIconHtml,
+  className: 'message-board-marker',
+  iconSize: [32, 32],
+  iconAnchor: [16, 16]
+});
+
 interface MapProps {
   markers: EvacuationMarker[];
   hazardZones: HazardZone[];
@@ -114,6 +139,8 @@ interface MapProps {
   userLocation: Coordinates | null;
   customStartPoint?: Coordinates | null;
   searchResult?: Coordinates | null;
+  messageBoardLocation?: Coordinates;
+  onMessageBoardClick?: () => void; // New prop handler
 }
 
 const MapEvents: React.FC<{ onClick: (pos: Coordinates) => void; mode: AppMode }> = ({ onClick, mode }) => {
@@ -125,12 +152,17 @@ const MapEvents: React.FC<{ onClick: (pos: Coordinates) => void; mode: AppMode }
   return null;
 };
 
+// Helper to validate coordinates
+const isValidCoord = (c: Coordinates | null | undefined): boolean => {
+  return !!c && typeof c.lat === 'number' && typeof c.lng === 'number' && !isNaN(c.lat) && !isNaN(c.lng);
+};
+
 // Component to fly to location when center prop changes
 const MapController: React.FC<{ coords: Coordinates }> = ({ coords }) => {
   const map = useMap();
   useEffect(() => {
     // Safety check before flying
-    if (coords && typeof coords.lat === 'number' && typeof coords.lng === 'number' && !isNaN(coords.lat) && !isNaN(coords.lng)) {
+    if (isValidCoord(coords)) {
       map.flyTo([coords.lat, coords.lng], 14, { duration: 1.5 });
     }
   }, [coords, map]);
@@ -142,7 +174,7 @@ const RouteFitter: React.FC<{ coords: Coordinates[] }> = ({ coords }) => {
   const map = useMap();
   useEffect(() => {
     if (coords && coords.length > 0) {
-      const validCoords = coords.filter(c => typeof c.lat === 'number' && typeof c.lng === 'number' && !isNaN(c.lat) && !isNaN(c.lng));
+      const validCoords = coords.filter(c => isValidCoord(c));
       if (validCoords.length > 0) {
         const bounds = L.latLngBounds(validCoords.map(c => [c.lat, c.lng]));
         map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 1.5 });
@@ -150,11 +182,6 @@ const RouteFitter: React.FC<{ coords: Coordinates[] }> = ({ coords }) => {
     }
   }, [coords, map]);
   return null;
-};
-
-// Helper to validate coordinates
-const isValidCoord = (c: Coordinates | null | undefined): boolean => {
-  return !!c && typeof c.lat === 'number' && typeof c.lng === 'number' && !isNaN(c.lat) && !isNaN(c.lng);
 };
 
 const MapComponent: React.FC<MapProps> = ({ 
@@ -170,7 +197,9 @@ const MapComponent: React.FC<MapProps> = ({
   center, 
   userLocation,
   customStartPoint,
-  searchResult
+  searchResult,
+  messageBoardLocation,
+  onMessageBoardClick
 }) => {
   const openInGoogleMaps = (lat: number, lng: number) => {
     window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
@@ -235,6 +264,25 @@ const MapComponent: React.FC<MapProps> = ({
          <Marker position={[searchResult.lat, searchResult.lng]} icon={SearchResultIcon} zIndexOffset={1000} />
       )}
 
+      {/* Message Board Location Marker */}
+      {isValidCoord(messageBoardLocation) && messageBoardLocation && (
+        <Marker 
+          position={[messageBoardLocation.lat, messageBoardLocation.lng]} 
+          icon={MessageBoardIcon}
+          eventHandlers={{
+            click: () => onMessageBoardClick && onMessageBoardClick()
+          }}
+        >
+          <Popup>
+             <div className="text-center p-1">
+               <h3 className="font-bold text-yellow-500 uppercase text-xs mb-1">Comm-Link Omega</h3>
+               <p className="text-[10px] text-gray-400">Public Message Board</p>
+               <button onClick={() => onMessageBoardClick && onMessageBoardClick()} className="mt-1 bg-yellow-600 text-black text-[10px] px-2 py-0.5 rounded font-bold">OPEN</button>
+             </div>
+          </Popup>
+        </Marker>
+      )}
+
       {routeData && (
         <Polyline
           positions={routeData.coordinates.filter(c => isValidCoord(c)).map(c => [c.lat, c.lng])}
@@ -270,9 +318,12 @@ const MapComponent: React.FC<MapProps> = ({
         );
       })}
 
-      {/* Official Government Alerts Layer */}
+      {/* Official Government Alerts Layer - Strict Validation Added */}
       {showAlerts && officialAlerts && officialAlerts.map(alert => {
-        const positions: [number, number][] = alert.area.map(c => [c.lat, c.lng]);
+        // Filter invalid points first!
+        const validPoints = alert.area.filter(c => isValidCoord(c));
+        const positions: [number, number][] = validPoints.map(c => [c.lat, c.lng]);
+        
         if (positions.length < 3) return null; // Need 3 points for a polygon
         
         return (

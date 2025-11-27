@@ -5,7 +5,7 @@ import { Loader2, Wand2, ShieldCheck, TriangleAlert, WifiOff } from 'lucide-reac
 
 interface MarkerModalProps {
   position: Coordinates;
-  initialData?: { name: string; description: string; type: 'shelter' | 'gathering_point' | 'medical' };
+  initialData?: { name: string; description: string; type: 'shelter' | 'gathering_point' | 'medical'; aiVerificationDetails?: string; };
   onSubmit: (name: string, description: string, type: 'shelter' | 'gathering_point' | 'medical') => Promise<void>;
   onCancel: () => void;
   isOnline: boolean;
@@ -72,6 +72,16 @@ const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubm
                     ? "Markers are public. An AI Agent will review your submission immediately."
                     : "You are offline. Marker will be saved as 'Pending Sync' and verified when connection returns."}
                 </span>
+              </p>
+            </div>
+          )}
+
+          {/* AI Verification Details Display */}
+          {initialData?.aiVerificationDetails && (
+            <div className="bg-red-900/30 p-3 rounded text-xs text-red-200 border border-red-700">
+              <p className="flex items-start gap-2">
+                <TriangleAlert className="w-4 h-4 shrink-0 text-red-400" />
+                <span className="font-bold">AI FEEDBACK:</span> {initialData.aiVerificationDetails}
               </p>
             </div>
           )}

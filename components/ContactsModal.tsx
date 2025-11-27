@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { EmergencyContact, HazardZone } from '../types';
-import { Users, UserPlus, Trash2, Copy, MessageSquareWarning, X, Share2, Siren, BrainCircuit, Mail, MessageCircle, Send, Radio, AlertTriangle, ShieldCheck, Link, Download, Smartphone } from 'lucide-react';
+import { Users, UserPlus, Trash2, Copy, MessageSquareWarning, X, Share2, Siren, BrainCircuit, Mail, MessageCircle, Send, Radio, AlertTriangle, ShieldCheck, Link, Download, Smartphone, Star } from 'lucide-react';
 
 interface ContactsModalProps {
   contacts: EmergencyContact[];
@@ -34,6 +34,7 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
   const [newPhone, setNewPhone] = useState('');
   const [newEmail, setNewEmail] = useState(''); 
   const [newRole, setNewRole] = useState<'family' | 'medic' | 'squad' | 'other'>('squad');
+  const [newPreferredMethod, setNewPreferredMethod] = useState<'sms' | 'whatsapp' | 'signal' | 'email'>('sms');
   const [recentlyAdded, setRecentlyAdded] = useState<EmergencyContact | null>(null);
   
   const isImportMode = !!importedContacts;
@@ -47,7 +48,8 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
       name: newName,
       phone: newPhone,
       email: newEmail,
-      role: newRole
+      role: newRole,
+      preferredMethod: newPreferredMethod
     };
 
     onAdd(newContact);
@@ -57,6 +59,7 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
     setNewName('');
     setNewPhone('');
     setNewEmail('');
+    setNewPreferredMethod('sms');
   };
 
   const generateInviteMessage = (name: string) => {
@@ -279,25 +282,16 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
                   
                   <div className="flex justify-center gap-2 flex-wrap">
                     <button 
-                      onClick={() => sendSMS(recentlyAdded.phone, generateInviteMessage(recentlyAdded.name))}
-                      className="bg-gray-700 hover:bg-gray-600 p-2 rounded text-white flex items-center gap-2 text-xs font-bold uppercase" title="Invite via SMS"
+                      onClick={() => {
+                        if (recentlyAdded.preferredMethod === 'whatsapp') sendWhatsApp(recentlyAdded.phone, generateInviteMessage(recentlyAdded.name));
+                        else if (recentlyAdded.preferredMethod === 'signal') sendSignal(recentlyAdded.phone);
+                        else if (recentlyAdded.preferredMethod === 'email' && recentlyAdded.email) sendEmail(recentlyAdded.email, "Invite", generateInviteMessage(recentlyAdded.name));
+                        else sendSMS(recentlyAdded.phone, generateInviteMessage(recentlyAdded.name));
+                      }}
+                      className="bg-green-600 hover:bg-green-500 p-2 rounded text-white flex items-center gap-2 text-xs font-bold uppercase shadow-lg shadow-green-500/20" title="Send Preferred Invite"
                     >
-                      <MessageCircle size={14} /> SMS
+                      <Star size={14} className="fill-current" /> INVITE ({recentlyAdded.preferredMethod?.toUpperCase() || 'SMS'})
                     </button>
-                    <button 
-                      onClick={() => sendWhatsApp(recentlyAdded.phone, generateInviteMessage(recentlyAdded.name))}
-                      className="bg-green-700 hover:bg-green-600 p-2 rounded text-white flex items-center gap-2 text-xs font-bold uppercase" title="Invite via WhatsApp"
-                    >
-                      <Send size={14} /> WA
-                    </button>
-                    {recentlyAdded.email && (
-                      <button 
-                        onClick={() => sendEmail(recentlyAdded.email!, "Szczecin Defense Invite", generateInviteMessage(recentlyAdded.name))}
-                        className="bg-blue-700 hover:bg-blue-600 p-2 rounded text-white flex items-center gap-2 text-xs font-bold uppercase" title="Invite via Email"
-                      >
-                        <Mail size={14} /> Email
-                      </button>
-                    )}
                     <button 
                        onClick={() => setRecentlyAdded(null)}
                        className="text-xs text-gray-500 underline ml-2"
@@ -335,18 +329,33 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
                       placeholder="user@example.com"
                     />
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-400 block mb-1">Role</label>
-                    <select 
-                      value={newRole} 
-                      onChange={e => setNewRole(e.target.value as any)}
-                      className="w-full bg-gray-900 border border-gray-600 text-white p-2 rounded focus:border-yellow-500 outline-none"
-                    >
-                      <option value="squad">Squad Member</option>
-                      <option value="family">Family</option>
-                      <option value="medic">Medic</option>
-                      <option value="other">Other</option>
-                    </select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-gray-400 block mb-1">Role</label>
+                      <select 
+                        value={newRole} 
+                        onChange={e => setNewRole(e.target.value as any)}
+                        className="w-full bg-gray-900 border border-gray-600 text-white p-2 rounded focus:border-yellow-500 outline-none"
+                      >
+                        <option value="squad">Squad</option>
+                        <option value="family">Family</option>
+                        <option value="medic">Medic</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-400 block mb-1">Preferred Invite</label>
+                      <select 
+                        value={newPreferredMethod} 
+                        onChange={e => setNewPreferredMethod(e.target.value as any)}
+                        className="w-full bg-gray-900 border border-gray-600 text-white p-2 rounded focus:border-yellow-500 outline-none"
+                      >
+                        <option value="sms">SMS</option>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="signal">Signal</option>
+                        <option value="email">Email</option>
+                      </select>
+                    </div>
                   </div>
                   <button 
                     type="submit"
@@ -420,32 +429,32 @@ const ContactsModal: React.FC<ContactsModalProps> = ({ contacts, onAdd, onDelete
                           <span className="text-[10px] text-gray-500 self-center uppercase font-bold mr-1">Invite:</span>
                           <button 
                             onClick={() => sendSMS(contact.phone, generateInviteMessage(contact.name))}
-                            className="flex-1 bg-gray-700 hover:bg-gray-600 py-1 rounded text-[10px] text-gray-200 flex items-center justify-center gap-1"
-                            title="Send Invitation via SMS"
+                            className={`flex-1 rounded text-[10px] flex items-center justify-center gap-1 transition-all ${contact.preferredMethod === 'sms' || !contact.preferredMethod ? 'bg-yellow-500 text-black font-bold py-1.5 shadow-lg shadow-yellow-500/20' : 'bg-gray-700 text-gray-300 hover:bg-gray-600 py-1'}`}
+                            title="Send SMS"
                           >
                             <MessageCircle size={10} /> SMS
                           </button>
                           <button 
                             onClick={() => sendWhatsApp(contact.phone, generateInviteMessage(contact.name))}
-                            className="flex-1 bg-green-900/50 hover:bg-green-800 py-1 rounded text-[10px] text-green-200 flex items-center justify-center gap-1"
-                            title="Send Invitation via WhatsApp"
+                            className={`flex-1 rounded text-[10px] flex items-center justify-center gap-1 transition-all ${contact.preferredMethod === 'whatsapp' ? 'bg-yellow-500 text-black font-bold py-1.5 shadow-lg shadow-yellow-500/20' : 'bg-green-900/50 text-green-200 hover:bg-green-800 py-1'}`}
+                            title="Send WhatsApp"
                           >
                             <Send size={10} /> WA
                           </button>
                           <button 
                             onClick={() => sendSignal(contact.phone)}
-                            className="flex-1 bg-blue-900/50 hover:bg-blue-800 py-1 rounded text-[10px] text-blue-200 flex items-center justify-center gap-1"
-                            title="Send Invitation via Signal"
+                            className={`flex-1 rounded text-[10px] flex items-center justify-center gap-1 transition-all ${contact.preferredMethod === 'signal' ? 'bg-yellow-500 text-black font-bold py-1.5 shadow-lg shadow-yellow-500/20' : 'bg-blue-900/50 text-blue-200 hover:bg-blue-800 py-1'}`}
+                            title="Send Signal"
                           >
-                            <Radio size={10} /> Signal
+                            <Radio size={10} /> Sig
                           </button>
                           {contact.email && (
                             <button 
                               onClick={() => sendEmail(contact.email!, "Szczecin Defense Invite", generateInviteMessage(contact.name))}
-                              className="flex-1 bg-cyan-900/50 hover:bg-cyan-800 py-1 rounded text-[10px] text-blue-200 flex items-center justify-center gap-1"
-                              title="Send Invitation via Email"
+                              className={`flex-1 rounded text-[10px] flex items-center justify-center gap-1 transition-all ${contact.preferredMethod === 'email' ? 'bg-yellow-500 text-black font-bold py-1.5 shadow-lg shadow-yellow-500/20' : 'bg-cyan-900/50 text-cyan-200 hover:bg-cyan-800 py-1'}`}
+                              title="Send Email"
                             >
-                              <Mail size={10} /> Email
+                              <Mail size={10} /> Mail
                             </button>
                           )}
                       </div>

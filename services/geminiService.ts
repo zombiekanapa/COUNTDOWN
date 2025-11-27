@@ -126,7 +126,36 @@ export const moderateMarkerContent = async (name: string, description: string): 
   }
 };
 
-// 3. Strategic Analysis (Optimized)
+// 3. Message Board Moderation (New)
+export const moderatePublicMessage = async (text: string): Promise<ModerationResult> => {
+  const ai = getClient();
+  if (!ai) return { status: 'approved', reason: "Dev Mode: Auto-approved" };
+
+  try {
+    const prompt = `
+      Public Message Board Moderator.
+      Task: Filter out spam, hate speech, obvious jokes. Approve alerts, help requests, community info.
+      Input: "${text}"
+      Return JSON: { approved: boolean, reason: string }
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: { responseMimeType: "application/json" }
+    });
+
+    const result = JSON.parse(response.text || "{}");
+    return result.approved 
+      ? { status: 'approved', reason: "AI OK" }
+      : { status: 'rejected', reason: result.reason || "Content flagged." };
+  } catch (error) {
+    if (isQuotaError(error)) return { status: 'approved', reason: "SIM MODE: Approved" };
+    return { status: 'error', reason: "Service unavailable" };
+  }
+};
+
+// 4. Strategic Analysis (Optimized)
 export const getStrategicAnalysis = async (): Promise<IntelReport> => {
   const ai = getClient();
   const fallbackData: IntelReport = {
@@ -156,11 +185,12 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
     });
 
     const data = JSON.parse(response.text || "{}");
+    // Strict validation for zone coordinates
     const zones = (data.zones || []).map((z: any, i: number) => ({
         ...z, id: `ai-${i}`, position: { lat: Number(z.lat), lng: Number(z.lng) }, radius: Number(z.radius)
-    })).filter((z: any) => !isNaN(z.position.lat));
+    })).filter((z: any) => !isNaN(z.position.lat) && !isNaN(z.position.lng));
 
-    // Handle alerts
+    // Handle alerts - area coordinates are validated in Map component, but good to check structure here
     const alerts = (data.officialAlerts || []).map((a: any, i: number) => ({
       ...a, id: `off-alert-${i}`, timestamp: Date.now()
     }));
@@ -176,7 +206,7 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
   }
 };
 
-// 4. Broadcast (Optimized)
+// 5. Broadcast (Optimized)
 export const generateBroadcast = async (level: AlertLevel, types: string[]): Promise<BroadcastMessage> => {
   const ai = getClient();
   

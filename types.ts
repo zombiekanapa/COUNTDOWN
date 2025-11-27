@@ -34,6 +34,7 @@ export interface EvacuationMarker {
   type: 'shelter' | 'gathering_point' | 'medical';
   verificationStatus: 'verified' | 'ai_approved' | 'pending' | 'pending_sync';
   authorName?: string;
+  aiVerificationDetails?: string; // New field for AI moderation feedback
 }
 
 export interface EmergencyContact {
@@ -44,6 +45,7 @@ export interface EmergencyContact {
   network?: string; 
   role: 'family' | 'medic' | 'squad' | 'other';
   preferredMethod?: 'sms' | 'whatsapp' | 'signal' | 'email';
+  verified?: boolean;
 }
 
 export interface RouteData {
@@ -74,8 +76,15 @@ export interface BroadcastMessage {
 
 export interface BroadcastConfig {
   frequency: number;
-  types: ('weather' | 'traffic' | 'hazmat' | 'civil')[];
+  types: string[]; // Changed from strict union to string[] to allow custom user types
   enabled: boolean;
+}
+
+export interface PublicMessage {
+  id: string;
+  text: string;
+  timestamp: number;
+  urgent: boolean;
 }
 
 export interface LinkItem {
@@ -90,6 +99,20 @@ export interface Category {
   icon: React.ReactNode;
   color: string;
   links: LinkItem[];
+}
+
+export interface EvaConversionResult {
+    original: string;
+    simplified: string;
+    stats: {
+        strength: number;
+        perception: number;
+        endurance: number;
+        charisma: number;
+        intelligence: number;
+        luck: number;
+    };
+    emojis: string[];
 }
 
 export enum AppMode {
