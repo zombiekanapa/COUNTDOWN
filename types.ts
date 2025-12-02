@@ -31,10 +31,10 @@ export interface EvacuationMarker {
   description: string;
   position: Coordinates;
   createdAt: number;
-  type: 'shelter' | 'gathering_point' | 'medical';
+  type: 'shelter' | 'gathering_point' | 'medical' | 'underground';
   verificationStatus: 'verified' | 'ai_approved' | 'pending' | 'pending_sync';
   authorName?: string;
-  aiVerificationDetails?: string; // New field for AI moderation feedback
+  aiVerificationDetails?: string; 
 }
 
 export interface EmergencyContact {
@@ -46,6 +46,14 @@ export interface EmergencyContact {
   role: 'family' | 'medic' | 'squad' | 'other';
   preferredMethod?: 'sms' | 'whatsapp' | 'signal' | 'email';
   verified?: boolean;
+}
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category: 'water' | 'food' | 'comms' | 'medical' | 'tools';
+  packed: boolean;
+  qty: number;
 }
 
 export interface RouteData {
@@ -76,7 +84,7 @@ export interface BroadcastMessage {
 
 export interface BroadcastConfig {
   frequency: number;
-  types: string[]; // Changed from strict union to string[] to allow custom user types
+  types: string[]; 
   enabled: boolean;
 }
 

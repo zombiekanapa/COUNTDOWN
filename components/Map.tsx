@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, Circle, Polyline, Polygon } from 'react-leaflet';
 import L from 'leaflet';
 import { Coordinates, EvacuationMarker, AppMode, HazardZone, RouteData, OfficialAlert } from '../types';
-import { Navigation, Pencil, Siren, MessageSquareText } from 'lucide-react';
+import { Navigation, Pencil, Siren, Satellite, ArrowDownCircle } from 'lucide-react';
 
 const DefaultIcon = L.icon({
   iconUrl: 'https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png',
@@ -34,6 +34,32 @@ const HazardIcon = L.divIcon({
   className: 'hazard-marker',
   iconSize: [36, 36],
   iconAnchor: [18, 18],
+  popupAnchor: [0, -20]
+});
+
+// Underground Marker Icon
+const undergroundIconHtml = `
+  <div style="
+    background-color: #3b82f6;
+    border: 2px solid #fff;
+    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.6);
+  ">
+    ⬇
+  </div>
+`;
+
+const UndergroundIcon = L.divIcon({
+  html: undergroundIconHtml,
+  className: 'underground-marker',
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
   popupAnchor: [0, -20]
 });
 
@@ -140,7 +166,7 @@ interface MapProps {
   customStartPoint?: Coordinates | null;
   searchResult?: Coordinates | null;
   messageBoardLocation?: Coordinates;
-  onMessageBoardClick?: () => void; // New prop handler
+  onMessageBoardClick?: () => void;
 }
 
 const MapEvents: React.FC<{ onClick: (pos: Coordinates) => void; mode: AppMode }> = ({ onClick, mode }) => {
@@ -148,6 +174,9 @@ const MapEvents: React.FC<{ onClick: (pos: Coordinates) => void; mode: AppMode }
     click(e) {
       onClick(e.latlng);
     },
+    contextmenu(e) {
+        // Simple ping placeholder logic
+    }
   });
   return null;
 };
@@ -201,8 +230,12 @@ const MapComponent: React.FC<MapProps> = ({
   messageBoardLocation,
   onMessageBoardClick
 }) => {
-  const openInGoogleMaps = (lat: number, lng: number) => {
-    window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+  const openInGoogleMaps = (lat: number, lng: number, type: 'nav' | 'recon') => {
+    if (type === 'recon') {
+        window.open(`https://earth.google.com/web/search/${lat},${lng}`, '_blank');
+    } else {
+        window.open(`https://www.google.com/maps/search/?api=1&query=${lat},${lng}`, '_blank');
+    }
   };
 
   const getHazardColor = (level: string) => {
@@ -217,6 +250,9 @@ const MapComponent: React.FC<MapProps> = ({
     isValidCoord(center)
       ? [center.lat, center.lng] 
       : [53.4285, 14.5528];
+
+  // Pseudo-Virtualization: Only render if < 200 or inside reasonable bounds 
+  // (Simplified for this file: just render all for now as dataset is small in MVP)
 
   return (
     <MapContainer 
@@ -264,7 +300,6 @@ const MapComponent: React.FC<MapProps> = ({
          <Marker position={[searchResult.lat, searchResult.lng]} icon={SearchResultIcon} zIndexOffset={1000} />
       )}
 
-      {/* Message Board Location Marker */}
       {isValidCoord(messageBoardLocation) && messageBoardLocation && (
         <Marker 
           position={[messageBoardLocation.lat, messageBoardLocation.lng]} 
@@ -318,13 +353,11 @@ const MapComponent: React.FC<MapProps> = ({
         );
       })}
 
-      {/* Official Government Alerts Layer - Strict Validation Added */}
       {showAlerts && officialAlerts && officialAlerts.map(alert => {
-        // Filter invalid points first!
         const validPoints = alert.area.filter(c => isValidCoord(c));
         const positions: [number, number][] = validPoints.map(c => [c.lat, c.lng]);
         
-        if (positions.length < 3) return null; // Need 3 points for a polygon
+        if (positions.length < 3) return null; 
         
         return (
           <Polygon 
@@ -336,7 +369,7 @@ const MapComponent: React.FC<MapProps> = ({
               fillOpacity: 0.2, 
               weight: 2, 
               dashArray: '10, 5',
-              className: 'hazard-pulse' // Use existing CSS animation
+              className: 'hazard-pulse'
             }}
           >
             <Popup>
@@ -347,9 +380,6 @@ const MapComponent: React.FC<MapProps> = ({
                  <div className="text-xs text-gray-400 font-mono mb-1">{alert.source} // {new Date(alert.timestamp).toLocaleTimeString()}</div>
                  <h4 className="font-bold text-white mb-1">{alert.title}</h4>
                  <p className="text-xs text-gray-300 mb-2">{alert.instructions}</p>
-                 <div className="bg-red-900/40 text-red-200 text-[10px] p-1 rounded uppercase font-bold text-center">
-                   Compliance Mandatory
-                 </div>
               </div>
             </Popup>
           </Polygon>
@@ -359,7 +389,11 @@ const MapComponent: React.FC<MapProps> = ({
       {markers.map((marker) => {
         if (!isValidCoord(marker.position)) return null;
         return (
-          <Marker key={marker.id} position={[marker.position.lat, marker.position.lng]} icon={HazardIcon}>
+          <Marker 
+             key={marker.id} 
+             position={[marker.position.lat, marker.position.lng]} 
+             icon={marker.type === 'underground' ? UndergroundIcon : HazardIcon}
+          >
             <Popup>
               <div className="p-1 min-w-[200px]">
                 <div className="flex items-center justify-between mb-2 border-b border-yellow-500/30 pb-2">
@@ -381,17 +415,22 @@ const MapComponent: React.FC<MapProps> = ({
                 
                 <p className="text-sm text-gray-200 mb-3 leading-relaxed">{marker.description}</p>
                 
-                <div className="flex justify-between items-center text-xs text-gray-400 mt-2">
-                  <span>Type: <span className="text-white capitalize">{marker.type.replace('_', ' ')}</span></span>
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                    <button 
+                      onClick={() => openInGoogleMaps(marker.position.lat, marker.position.lng, 'nav')}
+                      className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <Navigation size={12} />
+                      Navigate
+                    </button>
+                    <button 
+                      onClick={() => openInGoogleMaps(marker.position.lat, marker.position.lng, 'recon')}
+                      className="bg-green-700 hover:bg-green-600 text-white text-xs font-bold py-2 px-2 rounded flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <Satellite size={12} />
+                      Recon (Sat)
+                    </button>
                 </div>
-                
-                <button 
-                  onClick={() => openInGoogleMaps(marker.position.lat, marker.position.lng)}
-                  className="mt-3 w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 px-3 rounded flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Navigation size={14} />
-                  Navigate (Google Maps)
-                </button>
               </div>
             </Popup>
           </Marker>

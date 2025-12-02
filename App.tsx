@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Coordinates, EvacuationMarker, AppMode, EmergencyContact, HazardZone, RouteData, AlertLevel, BroadcastMessage, BroadcastConfig, OfficialAlert } from './types';
 import MapComponent from './components/Map';
@@ -7,16 +8,17 @@ import AboutAIModal from './components/AboutAIModal';
 import TransmissionModal from './components/TransmissionModal';
 import BroadcastReceiver from './components/BroadcastReceiver';
 import EducationModal from './components/EducationModal';
-import TacticalPlayer from './components/TacticalPlayer';
+import InventoryModal from './components/InventoryModal'; 
+import SignalModal from './components/SignalModal'; 
 import MessageBoardModal from './components/MessageBoardModal';
 import SyncManagerModal from './components/SyncManagerModal';
-import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, Trash2, Flame, Info, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move, Download, EyeOff, Eye, Compass, CloudLightning, Siren, MessageSquareText } from 'lucide-react';
+import EvaConverterModal from './components/EvaConverterModal'; // New
+import { Radio, Plus, Map as MapIcon, Locate, Menu, X, CheckCircle, Search, Users, Trash2, Flame, Info, Loader2, Navigation, Antenna, Wifi, WifiOff, RefreshCw, Clock, Move, Download, EyeOff, Eye, Compass, CloudLightning, Siren, MessageSquareText, Backpack, Zap, BrainCircuit } from 'lucide-react';
 import { moderateMarkerContent, getStrategicAnalysis, generateBroadcast } from './services/geminiService';
 
 const LOCAL_STORAGE_KEY_MARKERS = 'szczecin_evac_markers';
 const LOCAL_STORAGE_KEY_CONTACTS = 'szczecin_evac_contacts';
 
-// Extend DeviceOrientationEvent to support iOS property
 interface DeviceOrientationEventiOS extends DeviceOrientationEvent {
   webkitCompassHeading?: number;
 }
@@ -37,7 +39,7 @@ const App: React.FC = () => {
   const [showSyncModal, setShowSyncModal] = useState(false);
   
   // Modals
-  const [activeModal, setActiveModal] = useState<'contacts' | 'about' | 'transmission' | 'education' | 'messageBoard' | null>(null);
+  const [activeModal, setActiveModal] = useState<'contacts' | 'about' | 'transmission' | 'education' | 'messageBoard' | 'inventory' | 'signal' | 'eva' | null>(null);
   
   // Connectivity
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -52,15 +54,14 @@ const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
 
-  // Intel / Nav
+  // Intel
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [incomingContacts, setIncomingContacts] = useState<EmergencyContact[] | null>(null);
   const [hazardZones, setHazardZones] = useState<HazardZone[]>([]);
   const [officialAlerts, setOfficialAlerts] = useState<OfficialAlert[]>([]);
   const [showHeatmap, setShowHeatmap] = useState(false);
-  const [showAlerts, setShowAlerts] = useState(true); // Default to showing alerts
+  const [showAlerts, setShowAlerts] = useState(true); 
   const [intelHeadlines, setIntelHeadlines] = useState<string[]>([]);
-  // Fix strict type for defcon
   const [defcon, setDefcon] = useState<{level: 1 | 2 | 3 | 4 | 5, description: string}>({level: 5, description: "Loading..."});
   const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [isCalculatingRoute, setIsCalculatingRoute] = useState(false);
@@ -84,7 +85,6 @@ const App: React.FC = () => {
   const pendingSyncMarkers = markers.filter(m => m.verificationStatus === 'pending_sync');
   const pendingCount = pendingSyncMarkers.length;
 
-  // --- EFFECT: Connection & Compass ---
   useEffect(() => {
     const handleStatus = () => {
       const online = navigator.onLine;
@@ -125,22 +125,20 @@ const App: React.FC = () => {
       window.removeEventListener('offline', handleStatus);
       window.removeEventListener('deviceorientation', handleOrientation);
     };
-  }, []); // Empty dependency array to run once on mount
+  }, []);
 
-  // Auto-prompt sync when back online
   useEffect(() => {
     if (isOnline && pendingCount > 0) {
       setShowSyncModal(true);
     }
   }, [isOnline]);
 
-  // --- EFFECT: User Location & Trail ---
   useEffect(() => {
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const newLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setUserLocation(newLocation);
-        setLocationHistory((prev) => [...prev.slice(-19), newLocation]); // Keep last 20 points
+        setLocationHistory((prev) => [...prev.slice(-19), newLocation]); 
       },
       (err) => console.error("Geolocation error:", err),
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
@@ -148,7 +146,6 @@ const App: React.FC = () => {
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
-  // --- EFFECT: Init Data (Markers, Contacts, Roster, Strategic Analysis) ---
   useEffect(() => {
     try {
       const m = localStorage.getItem(LOCAL_STORAGE_KEY_MARKERS);
@@ -180,7 +177,6 @@ const App: React.FC = () => {
       } catch(e) { console.error("Error parsing roster link:", e); }
     }
 
-    // Initial Strategic Analysis
     if (navigator.onLine) {
        getStrategicAnalysis().then(report => {
          setHazardZones(report.zones);
@@ -189,30 +185,27 @@ const App: React.FC = () => {
          if (report.officialAlerts) setOfficialAlerts(report.officialAlerts);
        }).catch(e => console.error("Strategic analysis failed:", e));
     }
-  }, []); // Empty dependency array to run once on mount
+  }, []);
 
-  // --- EFFECT: Persist Data to Local Storage ---
   useEffect(() => { if(markers.length) localStorage.setItem(LOCAL_STORAGE_KEY_MARKERS, JSON.stringify(markers)); }, [markers]);
   useEffect(() => { localStorage.setItem(LOCAL_STORAGE_KEY_CONTACTS, JSON.stringify(contacts)); }, [contacts]);
 
-  // --- EFFECT: Broadcast Receiver Polling ---
   useEffect(() => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     if (!broadcastConfig.enabled) return;
 
     const fetchBroadcast = async () => {
       const msg = await generateBroadcast('medium', broadcastConfig.types);
-      setBroadcasts(prev => [...prev.slice(-15), msg]); // Keep last 15 messages
+      setBroadcasts(prev => [...prev.slice(-15), msg]);
     };
 
     if (isOnline) {
-      fetchBroadcast(); // Fetch immediately on mount/online
-      timerRef.current = window.setInterval(fetchBroadcast, Math.max(10000, broadcastConfig.frequency * 1000)); // Min 10s, otherwise user config
+      fetchBroadcast();
+      timerRef.current = window.setInterval(fetchBroadcast, Math.max(10000, broadcastConfig.frequency * 1000));
     }
     return () => { if (timerRef.current) window.clearInterval(timerRef.current); };
   }, [broadcastConfig, isOnline]);
 
-  // --- EFFECT: Message Board Polling ---
   useEffect(() => {
     if (messageBoardTimerRef.current) window.clearInterval(messageBoardTimerRef.current);
     if (!isOnline) return;
@@ -226,8 +219,8 @@ const App: React.FC = () => {
       ]);
     };
 
-    fetchPublicMessages(); // Fetch immediately
-    messageBoardTimerRef.current = window.setInterval(fetchPublicMessages, 30 * 60 * 1000); // Every 30 minutes
+    fetchPublicMessages(); 
+    messageBoardTimerRef.current = window.setInterval(fetchPublicMessages, 30 * 60 * 1000); 
     
     return () => { if (messageBoardTimerRef.current) window.clearInterval(messageBoardTimerRef.current); };
   }, [isOnline]);
@@ -244,7 +237,7 @@ const App: React.FC = () => {
 
   const handleMarkerSubmit = async (name: string, description: string, type: any) => {
     let status: EvacuationMarker['verificationStatus'] = 'pending_sync';
-    let aiFeedback: string | undefined = undefined; // Initialize AI feedback
+    let aiFeedback: string | undefined = undefined; 
     
     if (isOnline) {
       const res = await moderateMarkerContent(name, description);
@@ -254,16 +247,14 @@ const App: React.FC = () => {
         const suggestion = res.suggestedFix ? `\n\nSuggestion: ${res.suggestedFix}` : '';
         alert(message + suggestion);
         aiFeedback = res.reason + (res.suggestedFix ? ` (Fix: ${res.suggestedFix})` : '');
-        // If rejected, do not add marker.
         return;
       }
       
       if (res.status === 'error') {
         alert(`AI Error: ${res.reason}`);
         aiFeedback = `AI System Error: ${res.reason}`;
-        // Still allow to save as pending_sync if AI errors out, so user doesn't lose data
         status = 'pending_sync';
-      } else { // If approved or auto-approved in simulation
+      } else { 
         status = 'ai_approved';
         aiFeedback = res.reason || "Approved by AI.";
       }
@@ -272,11 +263,11 @@ const App: React.FC = () => {
     const newM = {
       id: editingMarker?.id || crypto.randomUUID(),
       name, description, type,
-      position: tempMarkerPos || editingMarker!.position, // tempMarkerPos for new, editingMarker.position for edit
+      position: tempMarkerPos || editingMarker!.position, 
       createdAt: Date.now(),
       verificationStatus: status,
       authorName: 'Scout',
-      aiVerificationDetails: aiFeedback // Store AI feedback
+      aiVerificationDetails: aiFeedback 
     } as EvacuationMarker;
 
     setMarkers(prev => editingMarker ? prev.map(m => m.id === editingMarker.id ? newM : m) : [...prev, newM]);
@@ -292,7 +283,7 @@ const App: React.FC = () => {
     const updatedMarkers = [...markers];
     let syncCount = 0;
     
-    await new Promise(r => setTimeout(r, 800)); // Simulate network delay
+    await new Promise(r => setTimeout(r, 800)); 
 
     for (const marker of markersToSync) {
       const idx = updatedMarkers.findIndex(m => m.id === marker.id);
@@ -308,8 +299,8 @@ const App: React.FC = () => {
             aiVerificationDetails: res.reason || "Approved during sync."
         };
       } else if (res.status === 'rejected') {
-        updatedMarkers.splice(idx, 1); // Remove rejected marker
-      } else { // AI error during sync
+        updatedMarkers.splice(idx, 1); 
+      } else { 
         updatedMarkers[idx] = {
             ...updatedMarkers[idx],
             verificationStatus: 'pending_sync',
@@ -351,7 +342,7 @@ const App: React.FC = () => {
           duration: data.routes[0].duration,
           startPoint: navStartMode === 'cursor' ? start : undefined
         });
-        if(window.innerWidth < 768) setSidebarOpen(false); // Close sidebar on mobile after route
+        if(window.innerWidth < 768) setSidebarOpen(false); 
       } else {
         alert("Navigation Error: No route found or OSRM service issue.");
       }
@@ -389,17 +380,17 @@ const App: React.FC = () => {
     setIsSearching(false);
   };
 
-  const messageBoardLocation: Coordinates = { lat: 53.4258, lng: 14.5516 }; // Plac Grunwaldzki, Szczecin
+  const messageBoardLocation: Coordinates = { lat: 53.4258, lng: 14.5516 }; 
 
   return (
-    <div className={`flex h-screen w-screen bg-gray-900 overflow-hidden font-sans ${stealthMode ? 'grayscale contrast-125' : ''}`}>
+    <div className={`flex h-screen w-screen bg-gray-900 overflow-hidden font-sans ${stealthMode ? 'grayscale contrast-150' : ''}`}>
       
       {/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 bg-gray-900 border-r border-yellow-500/30 w-80 z-[1100] transition-transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 flex flex-col`}>
-        <div className="p-4 border-b border-yellow-500/30 flex justify-between items-center">
+        <div className="p-4 border-b border-yellow-500/30 flex justify-between items-center bg-gray-950">
           <div onClick={handleLogoClick} className="flex items-center gap-2 text-yellow-500 cursor-pointer">
             <Radio className={`animate-pulse ${isAdmin ? 'text-red-500' : ''}`} />
-            <span className="font-bold">SZCZECIN DEFENSE</span>
+            <span className="font-bold tracking-widest">SZCZECIN DEFENSE</span>
           </div>
           <button onClick={() => setSidebarOpen(false)} className="md:hidden text-white"><X /></button>
         </div>
@@ -421,7 +412,6 @@ const App: React.FC = () => {
              disabled={!isOnline || isSyncing || pendingCount === 0}
              className={`p-1 rounded text-[10px] font-bold uppercase flex items-center gap-1 transition-colors 
                ${pendingCount > 0 ? (isOnline ? 'bg-orange-500/20 text-orange-400 border border-orange-500 animate-pulse' : 'bg-gray-800 text-gray-500') : 'bg-gray-800 text-gray-500 hover:text-white'}`}
-             title="Force Synchronization"
            >
              <CloudLightning size={12} />
              {isSyncing ? 'UPLOADING...' : `SYNC (${pendingCount})`}
@@ -464,11 +454,20 @@ const App: React.FC = () => {
                  )}
                </div>
              )}
+             
+             <div className="pt-4 border-t border-gray-700 space-y-2">
+                 <h3 className="text-gray-500 text-[10px] font-bold uppercase">Tactical Tools</h3>
+                 <button onClick={() => setActiveModal('eva')} className="w-full p-2 rounded text-xs font-bold bg-purple-900/40 text-purple-400 border border-purple-700 flex items-center gap-2 hover:bg-purple-900/60 transition-colors"><BrainCircuit size={16}/> PROTOCOL DECRYPTOR (EVA-01)</button>
+                 <button onClick={() => setActiveModal('inventory')} className="w-full p-2 rounded text-xs font-bold bg-green-900/40 text-green-400 border border-green-700 flex items-center gap-2 hover:bg-green-900/60 transition-colors"><Backpack size={16}/> THE BACKPACK</button>
+                 <button onClick={() => setActiveModal('signal')} className="w-full p-2 rounded text-xs font-bold bg-red-900/40 text-red-400 border border-red-700 flex items-center gap-2 hover:bg-red-900/60 transition-colors"><Zap size={16}/> VISUAL SOS</button>
+             </div>
 
-             <button onClick={() => { setActiveModal('contacts'); setIncomingContacts(null); }} className="w-full p-3 rounded font-bold bg-gray-800 text-gray-300 flex gap-2"><Users size={18}/> MY CREW</button>
-             <button onClick={() => setActiveModal('messageBoard')} className="w-full p-3 rounded font-bold bg-gray-800 text-yellow-300 flex gap-2"><MessageSquareText size={18}/> COMM-LINK OMEGA</button>
-             <button onClick={() => setActiveModal('transmission')} className="w-full p-3 rounded font-bold bg-gray-800 text-purple-400 flex gap-2"><Antenna size={18}/> TRANSMISSION HUB</button>
-             <button onClick={() => setActiveModal('education')} className="w-full p-3 rounded font-bold bg-gray-800 text-orange-400 flex gap-2"><Download size={18}/> MANUAL</button>
+             <div className="pt-2 border-t border-gray-700 space-y-2">
+                <button onClick={() => { setActiveModal('contacts'); setIncomingContacts(null); }} className="w-full p-2 rounded text-xs font-bold bg-gray-800 text-gray-300 flex gap-2"><Users size={16}/> MY CREW</button>
+                <button onClick={() => setActiveModal('messageBoard')} className="w-full p-2 rounded text-xs font-bold bg-gray-800 text-yellow-300 flex gap-2"><MessageSquareText size={16}/> COMM-LINK OMEGA</button>
+                <button onClick={() => setActiveModal('transmission')} className="w-full p-2 rounded text-xs font-bold bg-gray-800 text-purple-400 flex gap-2"><Antenna size={16}/> TRANSMISSION HUB</button>
+                <button onClick={() => setActiveModal('education')} className="w-full p-2 rounded text-xs font-bold bg-gray-800 text-orange-400 flex gap-2"><Download size={16}/> MANUAL</button>
+             </div>
            </div>
            
            <div className="mb-4">
@@ -479,7 +478,6 @@ const App: React.FC = () => {
                 {stealthMode ? <EyeOff size={14} /> : <Eye size={14} />} 
                 {stealthMode ? 'Stealth Mode: ON' : 'Stealth Mode: OFF'}
               </button>
-              <p className="text-[9px] text-gray-500 mt-1 text-center">Reduces screen glare & removes colors for night ops.</p>
            </div>
 
            <div className="space-y-2">
@@ -505,19 +503,28 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 h-full md:ml-80 relative flex flex-col">
+      <div className={`flex-1 h-full md:ml-80 relative flex flex-col ${stealthMode ? 'bg-black' : ''}`}>
         {!stealthMode && isOnline && intelHeadlines.length > 0 && (
           <div className="bg-black text-yellow-500 text-[10px] font-mono whitespace-nowrap overflow-hidden border-b border-yellow-600/50">
-             <div className="inline-block animate-marquee pl-full">{intelHeadlines.map((h, i) => <span key={i} className="mx-8">☢ {h}</span>)}</div>
+             <div className="inline-block animate-marquee pl-full">
+                {intelHeadlines.map((h, i) => (
+                    <span key={i} className="mx-8">
+                        {h.toUpperCase().includes("URGENT") || h.toUpperCase().includes("ALERT") ? <span className="animate-pulse text-red-500 font-bold mr-2">❕❗❕❗</span> : '☢ '}
+                        {h}
+                    </span>
+                ))}
+             </div>
           </div>
         )}
 
+        {!stealthMode && (
         <div className="absolute top-10 left-1/2 -translate-x-1/2 w-3/4 max-w-sm z-[1000]">
            <form onSubmit={handleSearch} className="relative">
              <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} disabled={!isOnline} className="w-full bg-gray-900/90 text-white pl-3 pr-10 py-2 rounded-lg border border-yellow-500/30 focus:border-yellow-500 outline-none backdrop-blur-sm" placeholder="Search Szczecin..." />
              <button type="submit" disabled={!isOnline} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-yellow-500">{isSearching ? <Loader2 className="animate-spin" size={16}/> : <Search size={16}/>}</button>
            </form>
         </div>
+        )}
 
         <div className="flex-1 relative">
           <MapComponent 
@@ -531,15 +538,13 @@ const App: React.FC = () => {
           
           <button onClick={() => setSidebarOpen(true)} className="md:hidden absolute top-4 left-4 z-[1000] bg-gray-900/90 text-yellow-500 p-2 rounded border border-yellow-500/50"><Menu/></button>
 
-          {showCompass && heading !== null && (
+          {!stealthMode && showCompass && heading !== null && (
             <div className="absolute top-24 right-4 z-[1000] w-16 h-16 bg-black/50 rounded-full border-2 border-white/30 backdrop-blur-sm flex items-center justify-center shadow-lg transition-transform" style={{ transform: `rotate(${-heading}deg)` }}>
                <div className="w-1 h-3 bg-red-500 absolute top-0.5 rounded-full"></div>
                <div className="text-[10px] font-bold text-white mt-4">N</div>
             </div>
           )}
           
-          <TacticalPlayer />
-
           <div className="absolute bottom-24 right-4 z-[1000] flex flex-col gap-2 md:bottom-8">
              <button onClick={() => setShowCompass(!showCompass)} className={`p-3 rounded-full border shadow-lg hidden md:flex ${showCompass ? 'bg-blue-600 border-blue-400 text-white' : 'bg-gray-800 border-gray-600 text-gray-400'}`} title="Toggle Compass"><Compass size={20}/></button>
              
@@ -578,8 +583,11 @@ const App: React.FC = () => {
       {activeModal === 'about' && <AboutAIModal onClose={() => setActiveModal(null)} />}
       {activeModal === 'transmission' && <TransmissionModal onClose={() => setActiveModal(null)} />}
       {activeModal === 'education' && <EducationModal onClose={() => setActiveModal(null)} />}
+      {activeModal === 'inventory' && <InventoryModal onClose={() => setActiveModal(null)} />}
+      {activeModal === 'signal' && <SignalModal onClose={() => setActiveModal(null)} />}
+      {activeModal === 'eva' && <EvaConverterModal onClose={() => setActiveModal(null)} />}
       {activeModal === 'messageBoard' && <MessageBoardModal messages={publicMessages} onSubmitMessage={async (text) => {
-        const moderation = await moderateMarkerContent("PublicMsg", text); // Re-using for now, ideally use specific func
+        const moderation = await moderateMarkerContent("PublicMsg", text);
         if(moderation.status === 'approved') {
              setPublicMessages(prev => [{id: crypto.randomUUID(), text: `[AI OK] ${text}`, urgent: false, timestamp: Date.now()}, ...prev]);
         } else {

@@ -5,8 +5,8 @@ import { Loader2, Wand2, ShieldCheck, TriangleAlert, WifiOff } from 'lucide-reac
 
 interface MarkerModalProps {
   position: Coordinates;
-  initialData?: { name: string; description: string; type: 'shelter' | 'gathering_point' | 'medical'; aiVerificationDetails?: string; };
-  onSubmit: (name: string, description: string, type: 'shelter' | 'gathering_point' | 'medical') => Promise<void>;
+  initialData?: { name: string; description: string; type: 'shelter' | 'gathering_point' | 'medical' | 'underground'; aiVerificationDetails?: string; };
+  onSubmit: (name: string, description: string, type: 'shelter' | 'gathering_point' | 'medical' | 'underground') => Promise<void>;
   onCancel: () => void;
   isOnline: boolean;
 }
@@ -14,7 +14,7 @@ interface MarkerModalProps {
 const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubmit, onCancel, isOnline }) => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [type, setType] = useState<'shelter' | 'gathering_point' | 'medical'>('gathering_point');
+  const [type, setType] = useState<'shelter' | 'gathering_point' | 'medical' | 'underground'>('gathering_point');
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -107,6 +107,7 @@ const MarkerModal: React.FC<MarkerModalProps> = ({ position, initialData, onSubm
               <option value="gathering_point">Gathering Point</option>
               <option value="shelter">Bunker / Shelter</option>
               <option value="medical">Medical Station</option>
+              <option value="underground">Underground / Metro</option>
             </select>
           </div>
 

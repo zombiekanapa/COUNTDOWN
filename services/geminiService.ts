@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { HazardZone, IntelReport, AlertLevel, BroadcastMessage, OfficialAlert } from "../types";
+import { HazardZone, IntelReport, AlertLevel, BroadcastMessage, OfficialAlert, EvaConversionResult } from "../types";
 
 const getClient = () => {
   const apiKey = process.env.API_KEY;
@@ -155,7 +155,7 @@ export const moderatePublicMessage = async (text: string): Promise<ModerationRes
   }
 };
 
-// 4. Strategic Analysis (Optimized)
+// 4. Strategic Analysis with Maps Grounding
 export const getStrategicAnalysis = async (): Promise<IntelReport> => {
   const ai = getClient();
   const fallbackData: IntelReport = {
@@ -169,28 +169,33 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
 
   try {
     const prompt = `
-      Szczecin Defense AI.
-      1. List 3 hazard zones (lat,lng,radius,riskLevel,desc,category,zoneType='danger').
-      2. List 2 safe zones (zoneType='safe').
-      3. 3 short headlines.
-      4. DEFCON level (1-5).
-      5. List 1 Official Alert (title, source, severity, instructions, area as array of 4 lat/lng coords).
+      Szczecin Defense AI. Use Google Maps to find real strategic locations.
+      1. Find 3 actual hazard zones (e.g. Chemical Plants, Rail Hubs) in Szczecin.
+      2. Find 2 actual safe zones (e.g. Forests, Parks).
+      3. 3 short headlines about current weather or traffic in Szczecin.
+      4. Estimate DEFCON level (1-5) based on current news.
+      5. Construct 1 Official Alert.
       Return JSON.
     `;
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: prompt,
-      config: { responseMimeType: "application/json" }
+      config: { 
+        responseMimeType: "application/json",
+        tools: [{ googleMaps: {} }] 
+      }
     });
 
     const data = JSON.parse(response.text || "{}");
-    // Strict validation for zone coordinates
+    
+    // Process Grounding Chunks if available (for reference/debugging, but we use the JSON output)
+    // const grounding = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+
     const zones = (data.zones || []).map((z: any, i: number) => ({
         ...z, id: `ai-${i}`, position: { lat: Number(z.lat), lng: Number(z.lng) }, radius: Number(z.radius)
     })).filter((z: any) => !isNaN(z.position.lat) && !isNaN(z.position.lng));
 
-    // Handle alerts - area coordinates are validated in Map component, but good to check structure here
     const alerts = (data.officialAlerts || []).map((a: any, i: number) => ({
       ...a, id: `off-alert-${i}`, timestamp: Date.now()
     }));
@@ -202,6 +207,7 @@ export const getStrategicAnalysis = async (): Promise<IntelReport> => {
       officialAlerts: alerts.length ? alerts : fallbackData.officialAlerts
     };
   } catch (error) {
+    console.warn("Strategy Analysis Failed (Likely Quota or Map Tool Error):", error);
     return fallbackData;
   }
 };
@@ -243,3 +249,34 @@ export const generateBroadcast = async (level: AlertLevel, types: string[]): Pro
     return fallback();
   }
 };
+
+export const convertTextEva01 = async (text: string): Promise<EvaConversionResult> => {
+    const ai = getClient();
+    const fallback: EvaConversionResult = {
+        original: text,
+        simplified: "SIMULATION: Stay safe.",
+        stats: { strength: 5, perception: 5, endurance: 5, charisma: 5, intelligence: 5, luck: 5 },
+        emojis: ["⚠️", "🛡️"]
+    };
+
+    if(!ai) return fallback;
+
+    try {
+        const prompt = `
+            Act as EVA-01, a civil defense AI.
+            Input: "${text}"
+            1. Simplify to 5-year-old level.
+            2. Assign Fallout S.P.E.C.I.A.L stats required to handle this.
+            3. Pick 3 relevant emojis.
+            Return JSON.
+        `;
+        const response = await ai.models.generateContent({
+             model: 'gemini-2.5-flash', 
+             contents: prompt,
+             config: { responseMimeType: "application/json" }
+        });
+        return JSON.parse(response.text || "{}");
+    } catch (e) {
+        return fallback;
+    }
+}
